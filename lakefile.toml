@@ -1,0 +1,27 @@
+name = "Tessera"
+defaultTargets = ["Tessera"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "crossterm-lean-ffi"
+git = "https://github.com/katzenpost/crossterm-lean-ffi"
+rev = "993b77125452a49fa2d56cef21c8a95e4f65ab17"
+
+[[lean_lib]]
+name = "Tessera"
+
+[[lean_lib]]
+name = "Demo"
+srcDir = "examples"
+
+[[lean_exe]]
+name = "tessera-test"
+root = "Tessera.Tests.Main"
+
+[[lean_exe]]
+name = "tessera-demo"
+root = "Demo"
+srcDir = "examples"

@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/katzenpost/crossterm-lean-ffi",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "993b77125452a49fa2d56cef21c8a95e4f65ab17",
+   "name": "«crossterm-lean-ffi»",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "993b77125452a49fa2d56cef21c8a95e4f65ab17",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "Tessera",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
