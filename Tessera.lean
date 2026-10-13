@@ -9,3 +9,4 @@ import Tessera.Ansi
 import Tessera.Diff
 import Tessera.Widget
 import Tessera.App
+import Tessera.Untrusted
