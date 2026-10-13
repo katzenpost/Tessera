@@ -24,7 +24,9 @@ each character's width; a character the terminal draws wider or narrower shifts 
 it on that row, into whatever is drawn beside it. So the allowlist holds the scripts and symbols
 terminals draw one cell wide, and the characters `charWidth` and terminals both take as two cells
 wide (CJK, and emoji drawn as pictures). East Asian ambiguous-width characters are taken as one
-cell, as terminals outside CJK locales draw them. -/
+cell, as terminals outside CJK locales draw them.
+
+`docs/TUI_SECURITY_GUIDELINES.md` covers the rest of what a TUI showing such text should do. -/
 
 namespace Tessera.Untrusted
 

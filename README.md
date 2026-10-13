@@ -35,6 +35,8 @@ def main : IO Unit := discard <| App.run { draw, update } 0
   They return `Safe` text, drawn by `Widget.safe`. `Untrusted.pasted` removes bracketed paste's
   markers from a paste, `withoutControls` takes controls and bidi controls out of text passed on,
   and `skeleton` and `mixedScript` tell names that look alike.
+  [docs/TUI_SECURITY_GUIDELINES.md](docs/TUI_SECURITY_GUIDELINES.md) says what else a TUI showing
+  such text should do.
 - **Applications** get input events, optional timer ticks, and events of their own, sent from
   any task through the function `App.run` passes to `start`.
 
