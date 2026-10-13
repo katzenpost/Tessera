@@ -25,7 +25,16 @@ def main : IO Unit := discard <| App.run { draw, update } 0
   and `withStyle`. A widget is fixed or greedy on each axis; a box gives its fixed children their
   room first and shares the rest among the greedy ones.
 - **Styles** set colors (16, 256 or RGB) and bold, dim, italic, underline and reverse.
-- **Drawing** keeps the last frame and writes only the cells that changed.
+- **Drawing** keeps the last frame and writes only the cells that changed. A character that takes
+  no cell (a control, a bidi or other format character, a combining mark) is never written to the
+  terminal.
+- **Text from elsewhere** goes through `Tessera.Untrusted` before it is drawn: a chat message, a
+  file name, a name someone chose. `Untrusted.line` and `Untrusted.lines` keep characters by an
+  allowlist of those the terminal and Tessera agree on the width of, and show anything else as a
+  visible stand-in (`␛` for ESC, `␦` for the rest) so that an attempt to steer the terminal shows.
+  They return `Safe` text, drawn by `Widget.safe`. `Untrusted.pasted` removes bracketed paste's
+  markers from a paste, `withoutControls` takes controls and bidi controls out of text passed on,
+  and `skeleton` and `mixedScript` tell names that look alike.
 - **Applications** get input events, optional timer ticks, and events of their own, sent from
   any task through the function `App.run` passes to `start`.
 

@@ -28,7 +28,10 @@ def write (s : DiffState) (x y : Nat) (c : Cell) : DiffState := Id.run do
     s := { s with out := s.out ++ Ansi.moveTo x y }
   if s.style != some c.style then
     s := { s with out := s.out ++ Ansi.sgr c.style, style := some c.style }
-  { s with out := s.out.push c.char, cursor := some (x + charWidth c.char, y) }
+  -- A cell holds a character to draw. One that takes no cell, such as a control character put
+  -- there with `Buffer.set`, would act on the terminal or move the cursor; it is drawn as `␦`.
+  let ch := if charWidth c.char == 0 then '␦' else c.char
+  { s with out := s.out.push ch, cursor := some (x + charWidth ch, y) }
 
 end DiffState
 
