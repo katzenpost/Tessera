@@ -15,9 +15,22 @@ inductive Color where
   /-- One of the 256 indexed colors. -/
   | indexed (n : UInt8)
   | rgb (r g b : UInt8)
-  deriving DecidableEq, Repr, Inhabited
+  deriving Repr, Inhabited
 
 namespace Color
+
+/-- Whether two colours are the same, written out so that comparing frames is quick. -/
+def beq : Color → Color → Bool
+  | .default, .default => true
+  | .ansi a, .ansi b => a.val == b.val
+  | .indexed a, .indexed b => a == b
+  | .rgb r g b, .rgb r' g' b' => r == r' && g == g' && b == b'
+  | _, _ => false
+
+theorem beq_iff {a b : Color} : beq a b = true ↔ a = b := by
+  cases a <;> cases b <;> simp [beq, Fin.val_inj, and_assoc]
+
+instance : DecidableEq Color := fun _ _ => decidable_of_iff _ beq_iff
 
 def black : Color := .ansi 0
 def red : Color := .ansi 1
@@ -47,9 +60,33 @@ structure Style where
   italic : Bool := false
   underline : Bool := false
   reverse : Bool := false
-  deriving DecidableEq, Repr, Inhabited
+  deriving Repr, Inhabited
 
 namespace Style
+
+def optBeq : Option Color → Option Color → Bool
+  | none, none => true
+  | some a, some b => a.beq b
+  | _, _ => false
+
+theorem optBeq_iff {a b : Option Color} : optBeq a b = true ↔ a = b := by
+  cases a <;> cases b <;> simp [optBeq, Color.beq_iff]
+
+/-- Whether two styles are the same, written out so that comparing frames is quick: a frame
+compares a style for each of its cells. -/
+def beq (a b : Style) : Bool :=
+  a.bold == b.bold && a.dim == b.dim && a.italic == b.italic && a.underline == b.underline &&
+    a.reverse == b.reverse && optBeq a.fg b.fg && optBeq a.bg b.bg
+
+theorem beq_iff {a b : Style} : beq a b = true ↔ a = b := by
+  rcases a with ⟨f, g, b1, d, i, u, r⟩
+  rcases b with ⟨f', g', b1', d', i', u', r'⟩
+  simp only [beq, optBeq_iff, Bool.and_eq_true, beq_iff_eq, Style.mk.injEq]
+  constructor
+  · rintro ⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩; exact ⟨h6, h7, h1, h2, h3, h4, h5⟩
+  · rintro ⟨h6, h7, h1, h2, h3, h4, h5⟩; exact ⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩
+
+instance : DecidableEq Style := fun _ _ => decidable_of_iff _ beq_iff
 
 def fgOf (c : Color) : Style := { fg := some c }
 def bgOf (c : Color) : Style := { bg := some c }

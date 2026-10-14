@@ -57,7 +57,7 @@ error: Tactic `decide` proved that the proposition
 is false
 -/
 #guard_msgs in
-example : Glyph Charset.standard := ⟨'\x1b', by decide⟩
+example : Glyph Charset.standard := { char := '\x1b', printable := by decide }
 
 /--
 error: failed to synthesize instance of type class

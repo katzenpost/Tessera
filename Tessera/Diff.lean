@@ -55,11 +55,16 @@ def drawRow (y : Nat) (all : Bool) :
     drawRow y all (x + 1) ns os st
   | _, _, _, st => st
 
+/-- Draw row `y`, unless only what changed is drawn and nothing in it did. -/
+def drawRowOf {w h : Nat} (old new : Buffer cs w h) (all : Bool) (s : DiffState cs) (y : Nat) :
+    DiffState cs :=
+  let n := new.rows[y]?.map (·.cells) |>.getD []
+  let o := old.rows[y]?.map (·.cells) |>.getD []
+  if all = false ∧ Cell.listBeq n o then s else drawRow y all 0 n o s
+
 def drawRows {w h : Nat} (old new : Buffer cs w h) (all : Bool) (start : DiffState cs) :
     Array (Op cs) :=
-  ((List.range h).foldl (init := start) fun s y =>
-    drawRow y all 0 (new.rows[y]?.map (·.cells) |>.getD [])
-      (old.rows[y]?.map (·.cells) |>.getD []) s).ops
+  ((List.range h).foldl (init := start) (drawRowOf old new all)).ops
 
 /-- The operations that turn a terminal showing `old` into one showing `new`. -/
 def diffOps {w h : Nat} (old new : Buffer cs w h) : List (Op cs) :=
