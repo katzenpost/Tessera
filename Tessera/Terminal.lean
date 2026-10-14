@@ -195,6 +195,7 @@ def apply (t : Term cs w h) : Op cs → Term cs w h
       cursor := (t.cursor.1 + em.width g.char, t.cursor.2) }
   | .title _ => t
   | .enterInline _ => t
+  | .anchorInline _ => t
   | .leaveInline _ => t
   | .image _ _ => t
 

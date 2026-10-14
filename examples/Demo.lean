@@ -63,7 +63,7 @@ def main (args : List String) : IO Unit := do
   let items := #["apples", "bread", "cheese", "dates", "eggs", "figs", "grapes", "honey",
     "ice cream", "jam", "kale", "lemons", "mangoes", "nuts", "olives", "pears"].map (Untrusted.line ·)
   let rows := placement.height (← CrosstermFfi.size).2.toNat - 6
-  let final ← App.run (placement := placement) { draw, update, mouse := placement == .fullscreen }
+  let final ← App.run (placement := placement) { draw, update, mouse := true }
     { items := { items }, rows, placement } fun post => do
     discard <| IO.asTask (prio := .dedicated) do
       while !(← stop.get) do

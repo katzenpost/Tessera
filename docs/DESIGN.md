@@ -111,6 +111,8 @@ Two functions produce strings rather than `Text`, for text that leaves Tessera i
 structure Glyph (cs : Charset) where
   char : Char
   printable : cs.Printable char
+  marks : List Char := []
+  marks_combining : ∀ m ∈ marks, Combining m
 
 inductive Cell (cs : Charset)
   | glyph (g : Glyph cs) (style : Style)
@@ -125,6 +127,8 @@ structure Row (cs : Charset) (w : Nat) where
 structure Buffer (cs : Charset) (w h : Nat) where
   rows : Vector (Row cs w) h
 ```
+
+A glyph is a character the charset allows and the combining accents drawn over it, in its cells. `Charset.glyphs` puts each accent on the glyph before it, up to `Glyph.maxMarks`, never on a space, and leaves out one with no glyph before it. Its accents are written right after it, and take no cell.
 
 A cell holds a glyph, the right half of a two-cell glyph, or nothing. The right half is drawn in its glyph's style and has none of its own, and a space is always a blank, so that two rows that look the same on a terminal are equal.
 
@@ -232,14 +236,16 @@ inductive Op (cs : Charset)
 ```
 
 Everything Tessera writes to the terminal is an `Op`, and `Ansi.encode` gives the characters of a list of them:
-- Text reaches the terminal through `print`, which takes a glyph, and `title`, which takes text the program wrote. No operation places text from elsewhere inside an escape sequence.
+- Text reaches the terminal through `print`, which takes a glyph and writes it and its accents, all of which only print (`glyph_inert`), and `title`, which takes text the program wrote. No operation places text from elsewhere inside an escape sequence.
 - No operation asks the terminal a question, so none can make the terminal type a reply into the program.
 - No operation reads or writes the clipboard.
 - A picture is `Pixels` Tessera holds, encoded by Tessera as sixel or as kitty graphics commands. Each body is built from numbers and is printable ASCII (`Plain`), so it can neither end its control string early nor hold an escape sequence. A picture from elsewhere is read from binary PPM, in Lean, up to `Pixels.maxPixels`, and only its pixels are kept. Whether the terminal shows pictures is configured (`App.graphics`), since Tessera asks the terminal nothing.
 
-A frame is placed on the whole screen, in the alternate screen, or **inline**, in a number of rows below the cursor, with the scrollback above left as it was (`Placement.inline`). Inline, `enterInline` makes room and has the terminal remember where the frame starts (ESC 7). A move is then a return there (ESC 8) followed by moves down and right, and clearing clears from there down. `leaveInline` leaves the cursor on the line after the frame. The same operations are drawn either way; only their encoding changes.
+A frame is placed on the whole screen, in the alternate screen, or **inline**, in the last rows of the screen, with what was above scrolled up and the scrollback left as it was (`Placement.inline`). Inline, `enterInline` moves to the foot of the screen, makes room, and has the terminal remember where the frame starts (ESC 7). The frame is at the foot so that its first row follows from the screen's size, which Tessera knows, and not from where the cursor was, which it would have to ask; `anchorInline` puts it there again after a resize. A move is then a return there (ESC 8) followed by moves down and right, and clearing clears from there down. `leaveInline` leaves the cursor on the line after the frame. The same operations are drawn either way; only their encoding changes.
 
 `diffOps old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. A two-cell glyph is written again when either of its halves changed. When the screen changes size, `redrawOps new` clears it and draws the whole frame. `diff` and `redraw` are their encodings, and they are all `App.run` writes.
+
+A row that did not change is skipped whole. Rows, cells, styles and colours are compared with equalities written out for speed (`Cell.listBeq`, `Style.beq`), each proved to be equality, as Lean's derived ones cost several times as much a cell; a frame that did not change costs about as much as comparing it.
 
 ### The VT model
 
@@ -306,7 +312,7 @@ inductive Msg (ε : Type)
 - Takes in every message already waiting before drawing the next frame, so a flood of messages is drawn once.
 - In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell. An exception's text, which may quote text from elsewhere, is filtered with `Untrusted.lines` before it is printed.
 
-`App.loop` turns what arrives into a `Msg`. A key, a paste or a mouse event that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A mouse event's position is the screen's, so an inline application, which does not know which row it starts on, does not capture the mouse. A paste arrives as a `Pasted`, without bracketed paste's markers.
+`App.loop` turns what arrives into a `Msg`. A key, a paste or a mouse event that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A mouse event's row is counted from the frame's first row: inline, that is the screen's height less the frame's, and an event above the frame is not passed on. A paste arrives as a `Pasted`, without bracketed paste's markers.
 
 ### Consent
 

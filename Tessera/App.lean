@@ -118,12 +118,11 @@ the last state. -/
 partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Incoming ε)))
     (init : σ) (ready : IO (Option (Incoming ε)) := pure none) (depth : Depth := .truecolor) :
     IO σ := do
-  let (w, h) ← screen.size
-  let h := screen.placement.height h
-  let frame := render init w h
+  let (w, sh) ← screen.size
+  let frame := render init w (screen.placement.height sh)
   screen.write (redraw frame screen.placement ++ titleOutput none (app.title init) ++
     pictureOutput (app.pictures init))
-  go init w h frame (app.title init) (app.pictures init)
+  go init w sh frame (app.title init) (app.pictures init)
 where
   /-- The frame for `s`, in the colours the terminal shows. -/
   render (s : σ) (w h : Nat) : Buffer cs w h :=
@@ -141,33 +140,47 @@ where
     | some t =>
       if shown.map (·.text) == some t.text then "" else Ansi.encode [.title t] screen.placement
     | none => ""
+  /-- A mouse event on a screen `sh` rows high, with its row counted from the frame's first row;
+  none if it is above the frame, which an inline frame does not fill. -/
+  inFrame (sh : Nat) : Msg ε → Option (Msg ε)
+    | .mouse e u =>
+      let top := sh - screen.placement.height sh
+      if e.row < top then none else some (.mouse { e with row := e.row - top } u)
+    | m => some m
   /-- Update for one message: the new state, the screen's size, and whether to quit. -/
-  step (s : σ) (w h : Nat) (i : Incoming ε) : IO (σ × Nat × Nat × Bool) := do
+  step (s : σ) (w sh : Nat) (i : Incoming ε) : IO (σ × Nat × Nat × Bool) := do
     let m := i.toMsg
-    let (w, h) := match m with
-      | .resize w' h' => (w', screen.placement.height h')
-      | _ => (w, h)
+    let (w, sh) := match m with
+      | .resize w' h' => (w', h')
+      | _ => (w, sh)
+    let some m := inFrame sh m | return (s, w, sh, false)
     let (s, quit) ← app.update m s
-    return (s, w, h, quit)
+    return (s, w, sh, quit)
   /-- Update for each message already waiting. -/
-  drain (s : σ) (w h : Nat) : IO (σ × Nat × Nat × Bool) := do
-    let some i ← ready | return (s, w, h, false)
-    let (s, w, h, quit) ← step s w h i
-    if quit then return (s, w, h, true) else drain s w h
-  go (s : σ) (w h : Nat) (shown : Buffer cs w h) (title : Option (Text cs .app))
+  drain (s : σ) (w sh : Nat) : IO (σ × Nat × Nat × Bool) := do
+    let some i ← ready | return (s, w, sh, false)
+    let (s, w, sh, quit) ← step s w sh i
+    if quit then return (s, w, sh, true) else drain s w sh
+  go (s : σ) (w sh : Nat) (shown : Buffer cs w (screen.placement.height sh)) (title : Option (Text cs .app))
       (pictures : List Picture) : IO σ := do
     let some i ← next | return s
-    let (s, w', h', quit) ← step s w h i
+    let (s, w', sh', quit) ← step s w sh i
     if quit then return s
-    let (s, w', h', quit) ← drain s w' h'
+    let (s, w', sh', quit) ← drain s w' sh'
     if quit then return s
-    let frame := render s w' h'
-    let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame screen.placement
-      else redraw frame screen.placement
+    let frame := render s w' (screen.placement.height sh')
+    let out := if hs : w = w' ∧ sh = sh' then
+        diff (cast (by rw [hs.1, hs.2]) shown) frame screen.placement
+      else
+        -- An inline frame is anchored to the foot of the screen again: the screen's height moved it.
+        let anchor := match screen.placement with
+          | .inline _ => Ansi.encode (cs := cs) [.anchorInline (screen.placement.height sh')] screen.placement
+          | .fullscreen => ""
+        anchor ++ redraw frame screen.placement
     let ps := app.pictures s
     let pics := if out.isEmpty && ps == pictures then "" else pictureOutput ps
     screen.write (out ++ titleOutput title (app.title s) ++ pics)
-    go s w' h' frame (app.title s) ps
+    go s w' sh' frame (app.title s) ps
 
 /-- The terminal, through crossterm and standard output, with frames placed by `placement`. -/
 def terminal (placement : Ansi.Placement := .fullscreen) : IO Screen := do
@@ -181,8 +194,9 @@ def terminal (placement : Ansi.Placement := .fullscreen) : IO Screen := do
 
 /-- Run `app` from `init` in raw mode, in the colours the environment asks for (`Depth.detect`),
 and return its last state. Its frames fill the terminal's alternate screen, or, with
-`placement := .inline n`, take `n` rows from the cursor, leaving what is above them as it was and
-the cursor on the line after them when the application quits. `start` is called once with a function that sends the application one of its own events;
+`placement := .inline n`, take the last `n` rows of the screen, scrolling what was above up and
+leaving the cursor on the line after them when the application quits. Inline, a mouse event's row
+is counted from the frame's first row, and one above the frame is not passed on. `start` is called once with a function that sends the application one of its own events;
 it may keep that function and call it from other tasks. -/
 def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ())
     (placement : Ansi.Placement := .fullscreen) : IO σ := do

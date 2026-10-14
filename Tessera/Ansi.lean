@@ -13,10 +13,12 @@ Everything Tessera writes is an `Op`: move the cursor, set the style, clear the 
 glyph, set the title, or make room for an inline frame and leave it. Text reaches the terminal only as glyphs, each a character its charset allows, and no
 operation places text inside an escape sequence or asks the terminal a question.
 
-A frame is drawn either on the whole screen or inline, in rows below the cursor, with the
-terminal's scrollback left as it was. Inline, positions are relative to the frame's first row,
-which the terminal is asked to remember (ESC 7), so a move is a return there (ESC 8) and moves
-down and right, and clearing clears from there down.
+A frame is drawn either on the whole screen or inline, in the last rows of the screen, with what
+was above scrolled up and the terminal's scrollback left as it was. Inline, positions are relative
+to the frame's first row, which the terminal is asked to remember (ESC 7), so a move is a return
+there (ESC 8) and moves down and right, and clearing clears from there down. The frame is at the
+foot of the screen so that where it starts follows from the screen's size, which Tessera knows,
+and not from where the cursor was, which it would have to ask.
 
 `output_only_own` says what a terminal makes of the output: read with `VT.tokens`, the encoding
 of a list of operations gives back exactly the tokens of those operations, each a printed
@@ -76,15 +78,21 @@ inductive Op (cs : Charset) where
   | print (g : Glyph cs)
   /-- Set the window's title, to text the program wrote. -/
   | title (t : Text cs .app)
-  /-- Make room for an inline frame of `rows` rows from the cursor, scrolling if need be, and
-  remember where it starts. -/
+  /-- Make room for an inline frame in the last `rows` rows of the screen, scrolling what is above
+  up, and remember where it starts. -/
   | enterInline (rows : Nat)
+  /-- Remember the start of an inline frame of `rows` rows at the foot of the screen again, as
+  after a resize. -/
+  | anchorInline (rows : Nat)
   /-- Put the cursor on the line after an inline frame of `rows` rows. -/
   | leaveInline (rows : Nat)
   /-- Show a picture at the cursor, as `g` shows them. -/
   | image (g : Graphics) (p : Pixels)
 
 variable {cs : Charset}
+
+/-- More rows than any screen has: moving down this many reaches the last row. -/
+def bottom : Nat := 9999
 
 /-- Move `n` (`f`: `A` up, `B` down, `C` right), or not at all. -/
 def relChars (n : Nat) (f : Char) : List Char := if n = 0 then [] else csiChars [n] f
@@ -102,7 +110,9 @@ def Op.chars (p : Placement) : Op cs → List Char
   | .print g => g.chars
   | .title t => '\x1b' :: ']' :: '0' :: ';' :: (t.text.toList ++ ['\x07'])
   | .enterInline n =>
-    '\r' :: (List.replicate (n - 1) '\n' ++ relChars (n - 1) 'A' ++ ['\x1b', '7'])
+    '\r' :: (csiChars [bottom] 'B' ++ List.replicate (n - 1) '\n' ++ relChars (n - 1) 'A' ++
+      ['\x1b', '7'])
+  | .anchorInline n => '\r' :: (csiChars [bottom] 'B' ++ relChars (n - 1) 'A' ++ ['\x1b', '7'])
   | .leaveInline n => '\x1b' :: '8' :: (relChars (n - 1) 'B' ++ ['\r', '\n'])
   | .image .sixel px => '\x1b' :: 'P' :: ('q' :: (plain (Sixel.body px)).1 ++ ['\x1b', '\\'])
   | .image .kitty px => (Kitty.bodies px).flatMap fun b =>
@@ -120,7 +130,10 @@ def Op.tokens (p : Placement) : Op cs → List Token
   | .print g => g.chars.map .print
   | .title t => [.osc ('0' :: ';' :: t.text.toList)]
   | .enterInline n =>
-    .control '\r' :: (List.replicate (n - 1) (.control '\n') ++ relTokens (n - 1) 'A' ++ [.esc [] '7'])
+    .control '\r' :: .csi (paramChars [bottom]) [] 'B' ::
+      (List.replicate (n - 1) (.control '\n') ++ relTokens (n - 1) 'A' ++ [.esc [] '7'])
+  | .anchorInline n =>
+    .control '\r' :: .csi (paramChars [bottom]) [] 'B' :: (relTokens (n - 1) 'A' ++ [.esc [] '7'])
   | .leaveInline n => .esc [] '8' :: (relTokens (n - 1) 'B' ++ [.control '\r', .control '\n'])
   | .image .sixel px => [.str 'P' ('q' :: (plain (Sixel.body px)).1)]
   | .image .kitty px => (Kitty.bodies px).map fun b => .str '_' ('G' :: (plain b).1)
@@ -257,7 +270,12 @@ theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
     simpa [Op.chars, Op.tokens] using run_osc hb rest
   | enterInline n =>
     simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
-    rw [run_control (.inl rfl), run_lf, run_rel _ (by decide), run_esc (.inl rfl)]
+    rw [run_control (.inl rfl), run_csiOf _ (by decide), run_lf, run_rel _ (by decide),
+      run_esc (.inl rfl)]
+    simp
+  | anchorInline n =>
+    simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
+    rw [run_control (.inl rfl), run_csiOf _ (by decide), run_rel _ (by decide), run_esc (.inl rfl)]
     simp
   | leaveInline n =>
     simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
@@ -327,9 +345,18 @@ theorem own_tokens (p : Placement) (op : Op cs) : ∀ t ∈ op.tokens p, Own t :
     intro t ht
     simp only [Op.tokens, List.mem_cons, List.mem_append, List.mem_replicate, List.not_mem_nil,
       or_false] at ht
-    rcases ht with rfl | (⟨_, rfl⟩ | h) | rfl
+    rcases ht with rfl | rfl | (⟨_, rfl⟩ | h) | rfl
     · exact .inl rfl
+    · exact ⟨paramChars_param _, by simp⟩
     · exact .inr rfl
+    · exact own_rel _ (by simp) t h
+    · exact .inl rfl
+  | anchorInline n =>
+    intro t ht
+    simp only [Op.tokens, List.mem_cons, List.mem_append, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl | h | rfl
+    · exact .inl rfl
+    · exact ⟨paramChars_param _, by simp⟩
     · exact own_rel _ (by simp) t h
     · exact .inl rfl
   | leaveInline n =>

@@ -26,8 +26,9 @@ def sgrTests : TestM Unit := do
   checkEq "inline move" "\x1b8\x1b[2B\x1b[3C" (Ansi.encode (cs := CS) [.moveTo 3 2] inl)
   checkEq "inline move home" "\x1b8" (Ansi.encode (cs := CS) [.moveTo 0 0] inl)
   checkEq "inline clear" "\x1b8\x1b[J" (Ansi.encode (cs := CS) [.clear] inl)
-  checkEq "enter inline" "\r\n\n\x1b[2A\x1b7" (Ansi.encode (cs := CS) [.enterInline 3] inl)
-  checkEq "enter inline one row" "\r\x1b7" (Ansi.encode (cs := CS) [.enterInline 1] inl)
+  checkEq "enter inline" "\r\x1b[9999B\n\n\x1b[2A\x1b7" (Ansi.encode (cs := CS) [.enterInline 3] inl)
+  checkEq "enter inline one row" "\r\x1b[9999B\x1b7" (Ansi.encode (cs := CS) [.enterInline 1] inl)
+  checkEq "anchor inline" "\r\x1b[9999B\x1b[2A\x1b7" (Ansi.encode (cs := CS) [.anchorInline 3] inl)
   checkEq "leave inline" "\x1b8\x1b[2B\r\n" (Ansi.encode (cs := CS) [.leaveInline 3] inl)
   let verified : Style := { fg := some .brightGreen, bold := true }
   check "no colour keeps a reserved style reserved" (verified.downgrade .none).reserved

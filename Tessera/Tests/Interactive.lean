@@ -45,6 +45,17 @@ def countFocus : Msg Unit → Nat → IO (Nat × Bool)
   | .focus false, n => pure (n + 10, false)
   | _, n => pure (n, false)
 
+/-- The rows of the mouse events an application sees. -/
+def mouseRows : Msg Unit → List Nat → IO (List Nat × Bool)
+  | .mouse e _, rs => pure (rs ++ [e.row], false)
+  | _, rs => pure (rs, false)
+
+def mouseSeen (placement : Ansi.Placement) (sh : Nat) (events : List Event) : IO (List Nat) := do
+  let queue ← IO.mkRef (events.map Incoming.terminal)
+  let screen : Screen := { size := pure (10, sh), write := fun _ => pure (), placement }
+  (App.mk (cs := CS) (fun _ => .empty) mouseRows (fun _ => none) none true none (fun _ => [])).loop
+    screen (queue.modifyGet fun | [] => (none, []) | m :: r => (some m, r)) []
+
 def tests : TestM Unit := do
   checkEq "type" ("hello", 5, #[]) (← typed (keys "hello"))
   checkEq "left and insert" ("hexllo", 3, #[]) (← typed (keys "hello" ++ [.key .left, .key .left, .key .left] ++ keys "x"))
@@ -80,6 +91,12 @@ def tests : TestM Unit := do
     [.mouse { kind := .scrollDown, column := 0, row := 0 }, .mouse { kind := .scrollDown, column := 0, row := 0 },
      .mouse { kind := .scrollUp, column := 0, row := 0 }]
   checkEq "wheel" 1 l.selected
+  let click (row : Nat) : Event := .mouse { kind := .down .left, column := 1, row }
+  checkEq "mouse rows on the whole screen" [0, 2, 7] (← mouseSeen .fullscreen 8 [click 0, click 2, click 7])
+  checkEq "mouse rows from an inline frame's first row" [0, 2]
+    (← mouseSeen (.inline 3) 8 [click 2, click 5, click 7])
+  checkEq "after a resize, from where the frame is then" [1]
+    (← mouseSeen (.inline 3) 8 [.resize 10 12, click 7, click 10])
   checkEq "click" 2 ((listOf 10).click 2 3).selected
   checkEq "click past the items" 0 ((listOf 2).click 2 3).selected
   checkEq "click below the list" 0 ((listOf 10).click 3 3).selected
