@@ -68,14 +68,18 @@ def click (l : ListView α) (y rows : Nat) : ListView α :=
 
 variable {cs : Charset} {o : Origin}
 
-/-- The items, each drawn by `row`, the selected one in reverse video. -/
+/-- The items, each drawn by `row` on one row, the selected one in reverse video across the
+list's width. -/
 def view (l : ListView α) (row : α → Widget cs o) : Widget cs o :=
   Widget.sized fun ctx =>
     let offset := scrollTo l.offset l.selected ctx.height
     let shown := (l.items.toList.zipIdx.drop offset).take ctx.height
     Widget.vBox <| shown.map fun (a, i) =>
-      if i == l.selected then Widget.withStyle { reverse := true } (Widget.hBox [row a, Widget.fill])
-      else row a
+      -- One row an item, as the scrolling counts them; the selected one in reverse video across
+      -- the whole width, with a fill after it unless it already takes the width itself.
+      let r := row a
+      let r := if i == l.selected && r.hPolicy == .fixed then Widget.hBox [r, Widget.fill] else r
+      Widget.vLimit 1 (if i == l.selected then Widget.withStyle { reverse := true } r else r)
 
 end ListView
 

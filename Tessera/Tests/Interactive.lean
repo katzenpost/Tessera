@@ -109,6 +109,17 @@ def tests : TestM Unit := do
     [[t!"1", t!"alice", t!"12345"], [t!"22", t!"bob", t!"7"]]
   checkEq "table" ["id name  n  ", "1  alice 123", "22 bob   7  "] (drawn t 12 3)
   checkEq "table cut to its width" ["id  n", "1   1", "22  7"] (drawn t 5 3)
+  checkEq "a table given more room keeps a row a line" ["id name  n  ", "1  alice 123", "22 bob   7  ", "            ", "            "]
+    (drawn t 12 5)
+  let wide : Widget CS .remote := hBox [str (Untrusted.line "claude-demo"), fill, str t!"3"]
+  checkEq "a selected row that fills its width is drawn whole" ["claude-demo  3", "work          "]
+    (drawn (({ items := #["claude-demo", "work"] } : ListView String).view fun s =>
+      if s == "claude-demo" then wide else str (Untrusted.line s)) 14 2)
+  check "and in reverse video to the edge"
+    (((({ items := #["claude-demo", "work"] } : ListView String).view fun s =>
+      if s == "claude-demo" then wide else str (Untrusted.line s)).draw 14 2).get 13 0).style.reverse
+  checkEq "a row taller than a line takes one" ["a", "b", " "]
+    (drawn (({ items := #["a", "b"] } : ListView String).view fun s => vBox [str (Untrusted.line s), fill]) 1 3)
   checkEq "fitWidths" [3, 1] (fitWidths 5 [3, 5])
   checkEq "fitWidths stops at the budget" [3] (fitWidths 3 [5, 2])
 
