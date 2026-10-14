@@ -15,7 +15,7 @@ open Tessera Widget
 
 /-- Counts `+` keys and its own events; quits on `q`. -/
 def counter : App CS Nat String where
-  draw n := str s!"count {n}"
+  draw n := str (t!"count " ++ .ofNat n)
   update
     | .input (.key (.char '+') _), n => pure (n + 1, false)
     | .input (.key (.char 'q') _), n => pure (n, true)

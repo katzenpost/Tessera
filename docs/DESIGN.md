@@ -42,6 +42,8 @@ structure Charset where
   printable_not_bidi      : ∀ c, Printable c → ¬ Bidi c
   printable_not_invisible : ∀ c, Printable c → ¬ Invisible c
   printable_not_combining : ∀ c, Printable c → ¬ Combining c
+  ascii_printable : ∀ n ≤ 0x5E, Printable (Char.ofNat (0x20 + n))
+  controlPicture_printable : ∀ n ≤ 0x26, Printable (Char.ofNat (0x2400 + n))
 ```
 
 `Printable` is an allowlist. A character is in it only when it is not a control or format character and Tessera and terminals agree on its width. `Charset.standard` holds:
@@ -50,6 +52,8 @@ structure Charset where
 - East Asian ambiguous-width characters, as one cell.
 
 `Charset.cjk` takes the ambiguous-width characters as two cells, as terminals in CJK locales draw them.
+
+The last two laws say that every charset allows printable ASCII and the Control Pictures, U+2400 to U+2426. Code written for any charset can then show plain text, and a stand-in for any character it refuses.
 
 Both charsets allow the same characters and differ only in width, so both are built by `Charset.ofPrintable`, which proves the laws once. The characters are defined by tables of code point ranges. Each law is proved by checking it on every range in the table, a finite check, and lifting the result to all characters.
 
@@ -74,37 +78,31 @@ structure Text (cs : Charset) (o : Origin) where
   private mk ::
   text    : String
   charsOk : ∀ c ∈ text.toList, cs.Printable c ∨ Combining c
-  seqOk   : WellFormedSeq text
+  seqOk   : marksOk none text.toList = true
 ```
 
 A `Text` is one line that may be drawn. Its proof fields hold at two levels:
-- **`charsOk`** checks each character. It rules out C0, DEL and C1 controls, newlines, bidi controls and invisible characters, which rules out every escape sequence. Concatenation preserves it.
-- **`seqOk`** checks rules about neighbouring characters:
-  - each base character carries at most a fixed number of combining marks;
-  - no mark appears without a base;
-  - a zero-width joiner appears only between emoji.
+- **`charsOk`** checks each character. It rules out C0, DEL and C1 controls, newlines, bidi controls and invisible characters, including the zero-width joiner, which rules out every escape sequence.
+- **`seqOk`** checks the combining accents: each follows a character, at most `maxMarks` in a row. A text therefore never begins with an accent, so `++` cannot attach one text's accents to the end of another. `marksOk_append` shows that the concatenation of two texts satisfies `seqOk` with no repair at the join.
 
-  `Text.append` re-establishes these rules where two texts meet, since marks at the start of the right-hand text attach to the last character of the left-hand one.
+The constructor is private, and a `Text` comes from one of these:
+- **`Untrusted.line`** filters a string from elsewhere. It keeps the characters the charset allows and replaces every other one with a visible stand-in: a control character becomes its Control Picture (`␛` for ESC), DEL becomes `␡`, and anything else refused becomes `␦`. An accent with no character before it becomes `␦`. One accent too many on a character becomes `␦`, and the rest are dropped. The result has origin `.remote`. Three theorems hold of it: `filterChars_charsOk` and `filterChars_marksOk` give its proof fields, and `line_sub` says that each of its characters is one of the input or a stand-in.
+- **`Untrusted.lines`** splits a text into such lines, expanding tabs. It returns at most `max 1 maxLines` of them, the last saying how many more there were.
+- **`t!"…"`** makes a `Text cs .app` from a string literal, with a proof checked by `decide` when the program compiles. For a charset known then, every character must be one it allows. For a charset that is only a parameter, every character must be printable ASCII. A literal containing a control character does not compile.
+- **`Text.ofNat`** gives the digits of a number, and **`++`** joins two texts of one origin.
 
-The constructor is private, and a `Text` comes from one of four places:
-- **`Untrusted.line`** filters a string from elsewhere. It keeps the characters the charset allows and replaces every other one with a visible stand-in: a control character becomes its Control Picture (`␛` for ESC), DEL becomes `␡`, and anything else refused becomes `␦`. Its result has origin `.remote`.
-- **`Untrusted.lines`** splits a text into such lines, expanding tabs and capping the number of lines.
-- **`t!"…"`** makes a `Text cs .app` from a string literal. The proof is checked when the program compiles, so a literal containing a control character does not compile.
-- **Operations that preserve the proofs**, such as `++` and the conversion from numbers.
+Text the program wrote may stand where text from elsewhere may: `Text.lift` takes a `Text cs .app` to a `Text cs .remote`, and is a coercion.
 
 ### Names
 
-An `Ident` is a `Text` for names: nicknames, room names, file names. It adds proof fields saying it holds:
-- no bidi controls;
-- no invisible characters;
-- none of the glyphs a name could use to fake a badge: locks, check marks, shields, and Private Use Area icons.
+An `Ident` is a `Text` for names: nicknames, room names, file names. A `Text` already holds no bidi control and no invisible character, nor anything from the Private Use Area, where icon fonts put their badges. `Ident` adds a proof that the name holds none of the other glyphs a name could use to fake a badge: locks, keys, check marks, shields and warning signs. `Ident.ofRemote` shows each of these as `␦` and filters the rest as `line` does.
 
 `skeleton` maps a name to what it looks like, ignoring case, accents, separators and letters of other scripts that pass for Latin ones. `mixedScript` tells whether a name mixes Latin with Greek or Cyrillic letters.
 
 ### Text passed on
 
 Two functions produce strings rather than `Text`, for text that leaves Tessera instead of reaching the screen:
-- `Untrusted.pasted` returns a `Pasted`: a paste with a proof that it contains neither of bracketed paste's markers.
+- `Untrusted.pasted` returns a `Pasted`: a paste with a proof that it contains neither of bracketed paste's markers. It removes the markers and then every ESC, so a marker hidden inside another, which reappears when the outer one is removed, goes too.
 - `withoutControls` returns a string with a proof that it contains no controls other than newline and tab, and no bidi controls. It is meant for a message about to be sent.
 
 ## Cells and buffers
@@ -162,7 +160,7 @@ A widget draws itself into the space it is given, and its result type says it fi
 On each axis a widget is either **fixed**, taking only the room it needs, or **greedy**, taking all the room it is given. A box gives its fixed children their room first and shares what is left among the greedy ones. This way `hBox [str label, txt body]` keeps the label whole and wraps the body in the rest of the line.
 
 The widgets are:
-- **text:** `str` draws one row and `txt` wraps. Both take a `Text`, never a `String`;
+- **text:** `str` draws one line, `strs` one line per row, and `txt` wraps. Each takes `Text`, never a `String`;
 - **space:** `fill`;
 - **layout:** `hBox` and `vBox`;
 - **frames:** `border` and `borderWithLabel`;

@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import Tessera.Diff
 import Tessera.Untrusted
+import Tessera.Widget
 import Tessera.Tests.Util
 
 /-! # Text from elsewhere
@@ -14,7 +15,7 @@ cell or the output, and widgets beside the text keep their borders where they we
 
 namespace Tessera.Tests.Untrusted
 
-open Tessera Widget Tessera.Untrusted
+open Tessera Widget Tessera.Untrusted Ident
 
 /-- A character a terminal would act on, or could reorder or hide text by, or whose width is
 uncertain. -/
@@ -72,9 +73,9 @@ def corpus : List (String × String) := [
   ("DEL", "back\x7Fspace")]
 
 /-- `text` between two bordered panes, as an application might draw a message. -/
-def framed (text : List Safe) : Buffer CS 40 6 :=
-  (hBox (cs := CS) [hLimit 6 (border (str "left")), border (vBox (text.map safe ++ [fill])),
-    hLimit 7 (border (str "right"))]).draw 40 6
+def framed (text : List (Text CS .remote)) : Buffer CS 40 6 :=
+  (hBox [hLimit 6 (border (str t!"left")), border (vBox (text.map str ++ [fill])),
+    hLimit 7 (border (str t!"right"))]).draw 40 6
 
 /-- The borders between the panes, on every row inside them. -/
 def bordersHold (b : Buffer CS 40 6) : Bool :=
@@ -104,25 +105,30 @@ def tests : TestM Unit := do
     let (len, g') := randNat g 0 80
     let (s, g'') := randomString g' len
     g := g''
-    if !(clean (line s).text && (lines s).all (clean ·.text)) then ok := false
+    if !(clean (line (cs := CS) s).text && (lines (cs := CS) s).1.all (clean ·.text)) then ok := false
   check "random text never leaves a forbidden character" ok
   for (what, payload) in corpus do
-    let b := framed (lines s!"{payload}\n{payload} and {payload}")
+    let b := framed (lines s!"{payload}\n{payload} and {payload}").1
     check s!"{what}: nothing forbidden reaches a cell" (cellsClean b)
     check s!"{what}: the panes keep their borders" (bordersHold b)
     check s!"{what}: the output writes nothing but its own CSI" (onlyCsi (redraw b))
     check s!"{what}: nothing that steers is passed on"
-      (!(withoutControls payload).any steers)
-  checkEq "controls show as Control Pictures" "␛]0;x␇" (line "\x1b]0;x\x07").text
-  checkEq "a newline in one line shows" "a␊b" (line "a\nb").text
-  checkEq "lines are capped" 20 (lines (String.intercalate "\n" (List.replicate 30 "x"))).length
-  checkEq "marks are capped" 1 ((line ("e" ++ String.ofList (List.replicate 9 '́'))).text.toList.filter (· == '␦')).length
-  checkEq "paste markers go" "ab" (pasted "a\x1b[201~b\x1b[200~")
+      (!(withoutControls payload).1.any steers)
+  checkEq "controls show as Control Pictures" "␛]0;x␇" (line (cs := CS) "\x1b]0;x\x07").text
+  checkEq "a newline in one line shows" "a␊b" (line (cs := CS) "a\nb").text
+  checkEq "lines are capped" 20 (lines (cs := CS) (String.intercalate "\n" (List.replicate 30 "x"))).1.length
+  checkEq "marks are capped" 1 ((line (cs := CS) ("e" ++ String.ofList (List.replicate 9 '́'))).text.toList.filter (· == '␦')).length
+  checkEq "paste markers go" "ab" (pasted "a\x1b[201~b\x1b[200~").text
+  checkEq "a marker hidden in a marker goes too" "[201~" (pasted "\x1b[2\x1b[201~01~").text
   check "no control character becomes a glyph"
     ((List.range 0xA0).all fun n => n ≥ 0x20 && n != 0x7F && n < 0x80 ||
       (Glyph.ofChar? (Char.ofNat n) : Option (Glyph CS)).isNone)
-  check "look-alike names share a skeleton" (skeleton "Alice" == skeleton "аlicе")
-  check "names that differ do not" (skeleton "alice" != skeleton "alicia")
-  check "mixed scripts" (mixedScript "pаypal" && !mixedScript "paypal")
+  let name (s : String) : Ident CS := ofRemote s
+  check "look-alike names share a skeleton" (skeleton (name "Alice") == skeleton (name "аlicе"))
+  check "names that differ do not" (skeleton (name "alice") != skeleton (name "alicia"))
+  check "mixed scripts" (mixedScript (name "pаypal") && !mixedScript (name "paypal"))
+  checkEq "a name cannot wear a badge" "alice ␦" (name "alice 🔒").text.text
+  checkEq "numbers as text" "1234" (Text.ofNat (cs := CS) 1234).text
+  checkEq "app text is drawn as written" ["┌ok┐"] ((str (cs := CS) t!"┌ok┐").draw 4 1).lines
 
 end Tessera.Tests.Untrusted

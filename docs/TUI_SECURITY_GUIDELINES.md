@@ -205,7 +205,7 @@ No function turns an arbitrary string into safe text without the check. Text con
 
 **Excluding characters excludes every escape sequence.** Every sequence a terminal interprets begins with ESC or a C1 introducer. A proof that safe text contains neither therefore covers every escape sequence: well-formed, malformed, nested, or wrapped for a multiplexer. Stated against a model of the VT parser, it is the property in the checklist below, proved for all inputs rather than sampled.
 
-**Some rules are about sequences.** The cap on combining marks, ZWJ only inside emoji, and closed bidi embeddings all depend on a character's neighbours. A per-character proof survives concatenation; these rules do not, because marks at the start of one string attach to the last character of the string before it. Concatenating safe text re-establishes them at the join.
+**Some rules are about sequences.** The cap on combining marks, ZWJ only inside emoji, and closed bidi embeddings all depend on a character's neighbours. A per-character proof survives concatenation; these rules need not, because marks at the start of one string attach to the last character of the string before it. Either concatenation re-establishes them at the join, or the type rules out what would break them: text that may not begin with a combining mark cannot lend marks to the text before it.
 
 **Every sink demands the type.** A safe type protects nothing if a raw string has another way to reach the terminal. Every function that writes to the screen accepts only safe text, or a single character carrying the same proof. That covers:
 - text widgets and labels,

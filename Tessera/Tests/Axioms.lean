@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Tessera.Widget
+import Tessera.Untrusted
 
 /-! # Axioms
 
@@ -12,7 +13,7 @@ the build. -/
 
 namespace Tessera.Tests.Axioms
 
-open Tessera
+open Tessera Untrusted
 
 /-- info: 'Tessera.Charset.standard' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms Charset.standard
@@ -31,5 +32,23 @@ open Tessera
 
 /-- info: 'Tessera.Widget.borderWithLabel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Widget.borderWithLabel
+
+/-- info: 'Tessera.Untrusted.line' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms line
+
+/-- info: 'Tessera.Untrusted.filterChars_marksOk' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms filterChars_marksOk
+
+/-- info: 'Tessera.Text.append' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Text.append
+
+/-- info: 'Tessera.Untrusted.Ident.ofRemote' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Ident.ofRemote
+
+/-- info: 'Tessera.Untrusted.pasted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms pasted
+
+/-- info: 'Tessera.Untrusted.withoutControls' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms withoutControls
 
 end Tessera.Tests.Axioms

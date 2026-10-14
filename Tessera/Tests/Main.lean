@@ -8,6 +8,7 @@ import Tessera.Tests.Widgets
 import Tessera.Tests.AppLoop
 import Tessera.Tests.Untrusted
 import Tessera.Tests.Axioms
+import Tessera.Tests.Rejects
 
 open Tessera.Tests
 

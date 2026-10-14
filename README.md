@@ -10,7 +10,7 @@ import Tessera
 open Tessera Widget
 
 def draw (n : Nat) : Widget .standard :=
-  center (borderWithLabel " Counter " (padAll 1 (str s!"{n}   + adds one, Esc quits")))
+  center (borderWithLabel t!" Counter " (padAll 1 (str (.ofNat n ++ t!"   + adds one, Esc quits"))))
 
 def update : Msg Unit → Nat → IO (Nat × Bool)
   | .input (.key (.char '+') _), n => pure (n + 1, false)
@@ -20,23 +20,25 @@ def update : Msg Unit → Nat → IO (Nat × Bool)
 def main : IO Unit := discard <| App.run { draw, update } 0
 ```
 
-- **Widgets** draw themselves into the space they are given: `str`, `txt` (wrapped), `fill`,
-  `hBox`, `vBox`, `border`, `borderWithLabel`, `pad`, `hLimit`, `vLimit`, `center`, `viewport`
-  and `withStyle`. A widget is fixed or greedy on each axis; a box gives its fixed children their
-  room first and shares the rest among the greedy ones.
+- **Widgets** draw themselves into the space they are given, and their results carry the proof
+  that they fit: `str`, `strs`, `txt` (wrapped), `fill`, `hBox`, `vBox`, `border`,
+  `borderWithLabel`, `pad`, `hLimit`, `vLimit`, `center`, `viewport` and `withStyle`. A widget is
+  fixed or greedy on each axis; a box gives its fixed children their room first and shares the
+  rest among the greedy ones.
 - **Styles** set colors (16, 256 or RGB) and bold, dim, italic, underline and reverse.
-- **Drawing** keeps the last frame and writes only the cells that changed. A character that takes
-  no cell (a control, a bidi or other format character, a combining mark) is never written to the
-  terminal.
-- **Text from elsewhere** goes through `Tessera.Untrusted` before it is drawn: a chat message, a
-  file name, a name someone chose. `Untrusted.line` and `Untrusted.lines` keep characters by an
-  allowlist of those the terminal and Tessera agree on the width of, and show anything else as a
-  visible stand-in (`␛` for ESC, `␦` for the rest) so that an attempt to steer the terminal shows.
-  They return `Safe` text, drawn by `Widget.safe`. `Untrusted.pasted` removes bracketed paste's
-  markers from a paste, `withoutControls` takes controls and bidi controls out of text passed on,
-  and `skeleton` and `mixedScript` tell names that look alike.
+- **Drawing** keeps the last frame and writes only the cells that changed. A cell holds a glyph,
+  a character the charset allows, so nothing a terminal would act on can reach one.
+- **Text** that widgets draw is a `Text`, which cannot hold a control character, a bidi control
+  or an invisible character, and so cannot hold an escape sequence. Text the program wrote comes
+  from `t!"…"` literals, checked when the program compiles. Text from elsewhere (a chat message,
+  a file name, a name someone chose) goes through `Untrusted.line` or `Untrusted.lines`, which keep
+  characters by an allowlist of those the terminal and Tessera agree on the width of, and show
+  anything else as a visible stand-in (`␛` for ESC, `␦` for the rest) so that an attempt to steer
+  the terminal shows. `Untrusted.Ident` is a name that cannot fake a badge, and its `skeleton` and
+  `mixedScript` tell names that look alike. `Untrusted.pasted` removes bracketed paste's markers
+  from a paste, and `withoutControls` takes controls and bidi controls out of text passed on.
   [docs/TUI_SECURITY_GUIDELINES.md](docs/TUI_SECURITY_GUIDELINES.md) says what else a TUI showing
-  such text should do.
+  such text should do, and [docs/DESIGN.md](docs/DESIGN.md) how Tessera is built to do it.
 - **Applications** get input events, optional timer ticks, and events of their own, sent from
   any task through the function `App.run` passes to `start`.
 

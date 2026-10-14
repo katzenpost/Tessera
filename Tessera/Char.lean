@@ -49,6 +49,11 @@ def Invisible (c : Char) : Prop := inRanges c.toNat invisibleRanges = true
 /-- Combining accents, which a terminal draws over the character before them. -/
 def Combining (c : Char) : Prop := 0x300 ≤ c.toNat ∧ c.toNat ≤ 0x36F
 
+def isCombining (c : Char) : Bool := 0x300 ≤ c.toNat && c.toNat ≤ 0x36F
+
+theorem combining_iff {c : Char} : Combining c ↔ isCombining c = true := by
+  simp [Combining, isCombining]
+
 instance : DecidablePred Bidi := fun _ => inferInstanceAs (Decidable (_ = true))
 instance : DecidablePred Invisible := fun _ => inferInstanceAs (Decidable (_ = true))
 instance : DecidablePred Combining := fun _ => inferInstanceAs (Decidable (_ ∧ _))
@@ -182,8 +187,23 @@ structure Charset where
   printable_not_bidi      : ∀ c, Printable c → ¬ Bidi c
   printable_not_invisible : ∀ c, Printable c → ¬ Invisible c
   printable_not_combining : ∀ c, Printable c → ¬ Combining c
+  /-- Printable ASCII, so that any charset can show plain text. -/
+  ascii_printable : ∀ n ≤ 0x5E, Printable (Char.ofNat (0x20 + n))
+  /-- Control Pictures, U+2400 to U+2426, so that any charset can show a stand-in for a
+  character it refuses. -/
+  controlPicture_printable : ∀ n ≤ 0x26, Printable (Char.ofNat (0x2400 + n))
 
 attribute [instance] Charset.decPrintable
+
+theorem Charset.printable_of_ascii (cs : Charset) {c : Char} (h1 : 0x20 ≤ c.toNat)
+    (h2 : c.toNat ≤ 0x7E) : cs.Printable c := by
+  have := cs.ascii_printable (c.toNat - 0x20) (by omega)
+  rwa [show 0x20 + (c.toNat - 0x20) = c.toNat by omega, Char.ofNat_toNat] at this
+
+theorem Charset.printable_of_controlPicture (cs : Charset) {c : Char} (h1 : 0x2400 ≤ c.toNat)
+    (h2 : c.toNat ≤ 0x2426) : cs.Printable c := by
+  have := cs.controlPicture_printable (c.toNat - 0x2400) (by omega)
+  rwa [show 0x2400 + (c.toNat - 0x2400) = c.toNat by omega, Char.ofNat_toNat] at this
 
 /-- What a terminal does with the characters a charset allows. Tessera cannot prove that a
 terminal measures them as it does; theorems that need it take an `Emulator`. -/
@@ -228,6 +248,8 @@ def Charset.ofPrintable (width : Char → Nat)
   printable_not_combining c h hc :=
     not_of_zeroWidth_false (c := c) combining_covered (isPrintable_zeroWidth h)
       (inRanges_iff.mpr ⟨(0x300, 0x36F), List.mem_singleton_self _, hc⟩)
+  ascii_printable := by decide
+  controlPicture_printable := by decide
 
 theorem charWidth_printable {c : Char} (h : isPrintable c = true) : charWidth c = 1 ∨ charWidth c = 2 := by
   simp only [charWidth, isPrintable_zeroWidth h, Bool.false_eq_true, ↓reduceIte]

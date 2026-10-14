@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
 SPDX-License-Identifier: AGPL-3.0-only
 -/
 
-import Tessera.Buffer
+import Tessera.Text
 
 /-! # Widgets
 
@@ -89,18 +89,23 @@ namespace Widget
 
 def empty : Widget cs := default
 
-/-- Text as it is, one line per line of `s`, clipped to the space given. -/
-def str (s : String) : Widget cs where
+variable {o : Origin}
+
+/-- Lines of text, one per row, clipped to the space given. -/
+def strs (ts : List (Text cs o)) : Widget cs where
   render ctx :=
-    let lines := (s.splitOn "\n").take ctx.height
+    let lines := (ts.map (·.text)).take ctx.height
     linesImage ctx lines (min ctx.width (lines.foldl (fun n l => max n (cs.textWidth l)) 0))
       (Nat.min_le_left _ _) (by simp [lines]; omega)
 
+/-- One line of text, clipped to the space given. -/
+def str (t : Text cs o) : Widget cs := strs [t]
+
 /-- Text wrapped to the width given. -/
-def txt (s : String) : Widget cs where
+def txt (t : Text cs o) : Widget cs where
   hPolicy := .greedy
   render ctx :=
-    let lines := (wrap cs ctx.width s).take ctx.height
+    let lines := (wrap cs ctx.width t.text).take ctx.height
     linesImage ctx lines ctx.width (Nat.le_refl _) (by simp [lines]; omega)
 
 /-- All the space given, filled with `c`, or blank if `cs` does not allow it. -/
@@ -256,7 +261,7 @@ def hBox (ws : List (Widget cs)) : Widget cs := box true ws
 def vBox (ws : List (Widget cs)) : Widget cs := box false ws
 
 /-- A line around `w`, with `label` in its top edge. -/
-def borderWithLabel (label : String) (w : Widget cs) : Widget cs :=
+def borderWithLabel (label : Text cs o) (w : Widget cs) : Widget cs :=
   { w with
     render := fun ctx =>
       if hs : ctx.width < 2 ∨ ctx.height < 2 then
@@ -277,10 +282,10 @@ def borderWithLabel (label : String) (w : Widget cs) : Widget cs :=
         let b := put b 0 (bh - 1) ("└" ++ horizontal ++ "┘")
         let b := (List.range inner.h).foldl (init := b) fun b y =>
           put (put b 0 (y + 1) "│") (bw - 1) (y + 1) "│"
-        let b := put b 1 0 (truncate cs inner.w label)
+        let b := put b 1 0 (truncate cs inner.w label.text)
         ⟨bw, bh, by omega, by omega, b.blit 1 1 inner.buf⟩ }
 
-def border (w : Widget cs) : Widget cs := borderWithLabel "" w
+def border (w : Widget cs) : Widget cs := borderWithLabel (o := .app) .empty w
 
 /-- `w` in the middle of all the space given. -/
 def center (w : Widget cs) : Widget cs where
