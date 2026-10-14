@@ -175,6 +175,56 @@ What the TUI leaves behind in the terminal, on disk and on the clipboard outlive
 - **Copying out.** Copy what the user sees. If the selection contains invisible or bidi characters, strip them or say so ("copied text contained 3 hidden characters").
 - **Crash output.** Panic and exception messages pass through the same filter before printing, after the terminal state has been restored.
 
+## Reducing the attack surface
+
+The rules above decide what untrusted input can do once the app displays it. Independently, the less of it reaches the app and the less the app does with it, the less there is to get wrong.
+
+- **Show fewer remote fields.** Every remote field on screen must be sanitized, laid out and clipped. A field that is never shown, such as a client name, a sender-claimed timestamp or presence text, cannot attack the display.
+- **Parse at one boundary.** Decode protocol messages into typed records at a single point, reject malformed input there, and drop fields the UI does not use. Code past that point never handles raw protocol bytes.
+- **Interpret little markup.** Plain text is the default. If senders may format text, allow a small fixed subset and render everything else literally.
+- **Decode complex formats elsewhere.** Images, documents and link previews are decoded in a separate, sandboxed process with size caps, or not at all. The TUI receives only the decoded, bounded result.
+- **Keep the process's authority small.** The TUI needs its tty, its configuration and its data directory. Links and files are opened by a separate helper invoked with an argv array.
+- **Enable only the terminal features the app uses.** Mouse reporting, focus events and extended keyboard protocols each add input that the key parser must handle.
+- **Keep the path from network to terminal short.** Write the code between them in a memory-safe language and keep its dependencies few. A parser bug on that path is reachable by anyone who can send a message.
+
+## Enforcing the rules with types
+
+Most rules in this document are invariants:
+- a property every string reaching the terminal must have,
+- a part of the screen remote content must never write to,
+- a condition every authority-granting action must meet.
+
+A test checks an invariant on the inputs it tries; a type checks it for every value the program can construct. In a language with dependent types, such as Lean, a type can carry a proof of the invariant, and the compiler rejects a program that cannot supply one. Proofs are erased when compiling, so a checked value costs nothing at run time.
+
+**Safe text is a type with no unsafe values.** A display string is a structure holding the string and a proof that each of its characters is on the allowlist. Its constructor is private. Values come from three places only:
+- the sanitizer, which proves its output allowed;
+- string literals, whose proof is checked at compile time;
+- operations that preserve the proof, such as concatenation.
+
+No function turns an arbitrary string into safe text without the check. Text containing ESC is not filtered on output, because it never exists as safe text in the first place.
+
+**Excluding characters excludes every escape sequence.** Every sequence a terminal interprets begins with ESC or a C1 introducer. A proof that safe text contains neither therefore covers every escape sequence: well-formed, malformed, nested, or wrapped for a multiplexer. Stated against a model of the VT parser, it is the property in the checklist below, proved for all inputs rather than sampled.
+
+**Some rules are about sequences.** The cap on combining marks, ZWJ only inside emoji, and closed bidi embeddings all depend on a character's neighbours. A per-character proof survives concatenation; these rules do not, because marks at the start of one string attach to the last character of the string before it. Concatenating safe text re-establishes them at the join.
+
+**Every sink demands the type.** A safe type protects nothing if a raw string has another way to reach the terminal. Every function that writes to the screen accepts only safe text, or a single character carrying the same proof. That covers:
+- text widgets and labels,
+- the window title,
+- individual cells,
+- the frame encoder.
+
+Rule 2 under escape sequences then holds by construction.
+
+**Provenance is part of the type.** Text the program wrote and text from elsewhere have different types. Reserved regions and reserved styles accept only the program's text. Remote text enters them only through functions that clip, delimit and mark it, such as a petname or a `~nick`. The compiler then checks the trusted path described under spoofing.
+
+**Consent is a value only the user can produce.** A keyboard event carries a token whose constructor only the event loop can call; events from the network carry none. Each action that grants authority requires a token for the object it acts on, and a confirmation requires a proof that its delay has passed. A remote event therefore cannot do any of the following:
+- open a link,
+- save a file,
+- confirm a dialog,
+- open a modal that takes focus.
+
+**What the types assume.** The guarantees about control characters assume nothing about the terminal. The guarantees about width, that text ends where the program computed, hold only if the terminal measures the allowed characters as the program does. That assumption is stated once, as a hypothesis that the width theorems take explicitly, so it is visible which guarantees depend on it. The emulator runs in the checklist test that hypothesis against real terminals.
+
 ## Checklist and testing
 
 The strongest test is a property: feed arbitrary remote input through the real renderer, parse the output bytes with a VT parser (the `vte` crate, `pyte`, libvterm), and assert that the only state changes are printing and the app's own allowlisted styles and cursor moves.
@@ -193,6 +243,7 @@ The strongest test is a property: feed arbitrary remote input through the real r
 - [ ] Message size, lines, combining marks and redraw rate are capped
 - [ ] Terminal state is restored on panic and signals
 - [ ] Logs and history are escaped and created 0600
+- [ ] Where the language allows, the invariants above are types and proofs rather than conventions
 
 Tests to keep in CI:
 
