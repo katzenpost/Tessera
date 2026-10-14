@@ -217,14 +217,13 @@ inductive Op (cs : Charset)
   | sgr (s : Style)
   | clear
   | print (g : Glyph cs)
+  | title (t : Text cs .app)
 ```
 
 Everything Tessera writes to the terminal is an `Op`, and `Ansi.encode` gives the characters of a list of them:
-- Text reaches the terminal only through `print`, which takes a glyph.
-- No operation places text inside an escape sequence.
+- Text reaches the terminal through `print`, which takes a glyph, and `title`, which takes text the program wrote. No operation places text from elsewhere inside an escape sequence.
 - No operation asks the terminal a question, so none can make the terminal type a reply into the program.
-
-Setting the window title and writing the clipboard are operations of the same kind. Each takes text the program wrote, and copying also takes a `Designation` (see Consent).
+- No operation reads or writes the clipboard.
 
 `diffOps old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. A two-cell glyph is written again when either of its halves changed. When the screen changes size, `redrawOps new` clears it and draws the whole frame. `diff` and `redraw` are their encodings, and they are all `App.run` writes.
 
@@ -242,9 +241,9 @@ It takes every introducer a terminal might honour: ESC, and the C1 controls that
 
 Four theorems state Tessera's guarantees against this model:
 - **`text_tokens_print`:** the characters of any `Text`, in any charset, are read as printed characters and nothing else. It follows from the `Charset` laws, through `inert_of_text`, and assumes nothing about any particular terminal.
-- **`run_csi`:** a control sequence of parameter bytes and a final byte is read as one token, and leaves the parser in its ground state.
+- **`run_csi`** and **`run_osc`:** a control sequence of parameter bytes and a final byte, and an operating system command whose body only prints, are each read as one token, and leave the parser in its ground state.
 - **`output_only_own`:** reading the encoding of a list of operations gives back exactly those operations' tokens, in order.
-- **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is a printed character that only prints, or one of Tessera's control sequences, which move the cursor (`H`), set the style (`m`) or clear the screen (`J`).
+- **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is a printed character that only prints, one of Tessera's control sequences, which move the cursor (`H`), set the style (`m`) or clear the screen (`J`), or the command setting the window's title to characters that only print.
 
 The width guarantee is stated against an `Emulator`. A `Term` is a terminal's screen, cursor and style. `Term.apply em` carries out an operation the way a terminal measuring glyphs as `em` does: moving the cursor, setting the style, clearing the screen, or printing a glyph `em.width` cells wide at the cursor and moving the cursor past it. Two theorems hold for any `em : Emulator cs`:
 - **`diff_correct`:** applying `diffOps old new` to a terminal showing `old` leaves it showing `new`, whatever its cursor and style were.
@@ -258,45 +257,51 @@ The proof follows `diff` cell by cell. `Sim` says that the cursor and style `dif
 structure App (cs : Charset) (σ ε : Type) where
   draw : σ → Widget cs .remote
   update : Msg ε → σ → IO (σ × Bool)
+  title : σ → Option (Text cs .app) := fun _ => none
   tickMs : Option UInt32 := none
-```
 
-`App.run` sets up the terminal, runs the application, and restores the terminal afterwards. It does the following:
-- Enters raw mode and the alternate screen, hides the cursor, and enables bracketed paste.
-- Reads terminal events on one task and timer ticks on another.
-- Gives `start` a function that sends the application events of its own from any task.
-- Draws the first frame, then updates and draws again for each message.
-- In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell, and filters any error text through `Untrusted.line` before printing it.
-
-### Consent
-
-```lean
 inductive Msg (ε : Type)
-  | input (e : Event) (u : UserInput)
+  | key (k : Key) (m : Modifiers) (u : UserInput)
+  | paste (p : Untrusted.Pasted) (u : UserInput)
+  | resize (width height : Nat)
   | tick
   | custom (e : ε)
 ```
 
-`UserInput` has a private constructor, called only by `App.run` for events read from the terminal. Events from the network arrive as `custom` and carry no `UserInput`.
+`App.run` sets up the terminal, runs the application, and restores the terminal afterwards. It does the following:
+- Enters raw mode and the alternate screen, hides the cursor, and enables bracketed paste.
+- Reads terminal events on one task and timer ticks on another, each arriving as an `Incoming` message.
+- Gives `start` a function that sends the application events of its own from any task, as `Incoming.custom`.
+- Draws the first frame, then updates and draws again for each message. It writes the window's title when the application sets one and when it changes.
+- In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell.
 
-An action that grants authority takes a `Designation` of the object it acts on, and a `Designation` can be made only from a `UserInput`. This covers:
-- `openLink`: opening a link;
-- `saveFile`: saving a file;
-- `trustKey`: trusting a key;
-- `copy`: copying to the clipboard.
+`App.loop` turns what arrives into a `Msg`. A key or a paste that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A paste arrives as a `Pasted`, without bracketed paste's markers.
 
-A `Url` carries a proof that its scheme is `https` or `http`, and `openLink` runs the opener with an argv array and `--` before the URL.
+### Consent
 
-A `Modal` opens only with a `UserInput`, so a remote event cannot take the keyboard's focus. A `Confirmation` states its consequence as `Text cs .app` and records when it was shown. Confirming it takes a proof that the delay has passed, obtained with `if h : now - shownAt ≥ delay then …`.
+`UserInput` has a private constructor, used only by `App.loop`. Events from elsewhere arrive as `Msg.custom` and carry none. From a `UserInput` come:
+- **`Designation x`:** the user chose `x`. An action that grants authority takes one for the thing it acts on: `openLink` opens a link only with a designation of that link.
+- **`Modal`:** a dialog that takes the keyboard's focus, which only the user opens.
+- **`Confirmation`:** a question put before an action that cannot be undone. Its consequence is `Text cs .app`, saying what the action does.
 
-A paste arrives as a `Pasted`. Commands are parsed only from typed input, so a pasted `/command` is message text, and an unknown command is an error rather than a message sent.
+`Confirmation.answer c msg now` returns a `Confirmed c`, which the action takes, only for Ctrl+Y pressed at least 500 ms after the question appeared. Three theorems hold of it:
+- `answer_custom`: a message from elsewhere never confirms.
+- `answer_early`: a key pressed before the delay never confirms.
+- `enter_not_confirm` and `y_not_confirm`: Enter and `y` alone are not the confirming key.
+
+Anything else leaves the question unanswered, which is the safe answer.
+
+A **`Url`** carries proofs that it begins with `https://` or `http://` and holds only printable ASCII with no space. `Url.head` shows it begins with `h`, so a program it is passed to cannot take it for an option. `openLink` runs the opener with the link as one argument, through no shell, with the opener's output kept off the screen.
+
+**`Typed.classify`** reads a typed line: a line beginning with `/` is a command, which must be a known one. An unknown command is an error, never a message sent. A paste arrives as `Msg.paste`, apart from typed keys, and is message text whatever it begins with.
 
 ## Proofs
 
-- No proof uses `sorry`, `native_decide`, or an axiom beyond Lean's standard `propext`, `Quot.sound` and `Classical.choice`. `Tests/Axioms.lean` prints the axioms of each main theorem.
-- `Tests/Rejects.lean` holds programs that must not compile:
-  - a `String` passed to `Widget.str`;
-  - a control character in a `t!` literal;
-  - remote text in a `Frame`'s status bar;
-  - `openLink` without a `Designation`.
-- The randomized and corpus tests in `Tests/` drive the compiled code, including the FFI, with hostile input. The theorems cover Tessera's model of the terminal; the tests cover the code as it runs.
+- No proof uses `sorry`, `native_decide`, or an axiom beyond Lean's standard `propext`, `Quot.sound` and `Classical.choice`. `Tests/Axioms.lean` checks the axioms of each main result, and the build fails if one changes.
+- `Tests/Rejects.lean` holds programs that must not compile, each with the error it fails with:
+  - text that is not a `Text`: a `String` passed to `Widget.str`, a `t!` literal holding a control character, a `Text` built with its private constructor, or a glyph made from ESC;
+  - text from elsewhere where the program's must be: as `Text cs .app`, in a `Widget cs .app`, or in a `Frame`'s header;
+  - a widget passed off as the program's: one of the program's own making as `Widget cs .app`, or one built with `Widget`'s private constructor;
+  - a sender style with reverse video;
+  - consent not given: a `UserInput`, `Designation` or `Confirmed` built by hand, `openLink` without a `Designation`, or `Incoming.toMsg` called outside `App.loop`.
+- The randomized and corpus tests in `Tests/` drive the compiled code with hostile input. The model terminal they draw on reads output with `VT.tokens`, the parser the theorems are stated against. The theorems cover Tessera's model of the terminal; the tests cover the code as it runs.

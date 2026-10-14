@@ -187,6 +187,7 @@ def apply (t : Term cs w h) : Op cs → Term cs w h
       screen := t.screen.putCells t.cursor.1 t.cursor.2 (em.cells g t.style)
         (em.wellFormed_cells g t.style)
       cursor := (t.cursor.1 + em.width g.char, t.cursor.2) }
+  | .title _ => t
 
 def exec (t : Term cs w h) (ops : List (Op cs)) : Term cs w h := ops.foldl (apply em) t
 

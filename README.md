@@ -13,8 +13,8 @@ def draw (n : Nat) : Widget .standard .remote :=
   center (borderWithLabel t!" Counter " (padAll 1 (str (.ofNat n ++ t!"   + adds one, Esc quits"))))
 
 def update : Msg Unit → Nat → IO (Nat × Bool)
-  | .input (.key (.char '+') _), n => pure (n + 1, false)
-  | .input (.key .esc _), n => pure (n, true)
+  | .key (.char '+') _ _, n => pure (n + 1, false)
+  | .key .esc _ _, n => pure (n, true)
   | _, n => pure (n, false)
 
 def main : IO Unit := discard <| App.run { draw, update } 0

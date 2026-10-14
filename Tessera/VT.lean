@@ -190,4 +190,29 @@ theorem run_csi {ps : List Char} (hp : ∀ p ∈ ps, isParam p) {f : Char} (hf :
   simp only [List.nil_append] at h
   simp [run, step, stepGround, afterEsc, h]
 
+/-- The body of an operating system command, then BEL, after OSC. -/
+theorem run_osc_body {body : List Char} (hb : ∀ c ∈ body, Inert c) (acc rest : List Char) :
+    run (.osc acc) (body ++ '\x07' :: rest) = .osc (acc ++ body) :: run .ground rest := by
+  induction body generalizing acc with
+  | nil => simp [run, step]
+  | cons c t ih =>
+    obtain ⟨h1, h2, h3⟩ := hb c (List.mem_cons_self ..)
+    have hbel : (c == '\x07') = false := by
+      rw [beq_eq_false_iff_ne]; rintro rfl; simp at h1
+    have hst : isST c = false := by simp [isST]; omega
+    have hesc : (c == '\x1b') = false := by
+      rw [beq_eq_false_iff_ne]; rintro rfl; simp at h1
+    simp only [List.cons_append, run, step, hbel, hst, hesc, Bool.or_self, Bool.false_eq_true,
+      ↓reduceIte, List.nil_append]
+    rw [ih (fun x hx => hb x (List.mem_cons_of_mem _ hx))]
+    simp
+
+/-- An operating system command whose body only prints is read as one, ended by BEL, and the
+terminal is in its ground state after it. -/
+theorem run_osc {body : List Char} (hb : ∀ c ∈ body, Inert c) (rest : List Char) :
+    run .ground ('\x1b' :: ']' :: (body ++ '\x07' :: rest)) = .osc body :: run .ground rest := by
+  have h := run_osc_body hb [] rest
+  simp only [List.nil_append] at h
+  simp [run, step, stepGround, afterEsc, h]
+
 end Tessera.VT

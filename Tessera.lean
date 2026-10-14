@@ -12,6 +12,7 @@ import Tessera.Diff
 import Tessera.Terminal
 import Tessera.Widget
 import Tessera.App
+import Tessera.Consent
 import Tessera.Text
 import Tessera.Untrusted
 import Tessera.TrustedPath

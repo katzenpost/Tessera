@@ -42,17 +42,17 @@ def draw (s : State) : W :=
     withStyle { dim := true } (str (t!" heartbeats from a background task: " ++ .ofNat s.beats))]
 
 def update : Msg Unit → State → IO (State × Bool)
-  | .input (.key .esc _), s => pure (s, true)
-  | .input (.key (.char 'c') { ctrl := true, .. }), s => pure (s, true)
-  | .input (.key .up _), s => pure ({ s with selected := s.selected - 1 }, false)
-  | .input (.key .down _), s => pure ({ s with selected := min (s.selected + 1) (s.items.size - 1) }, false)
-  | .input (.key .backspace _), s => pure ({ s with input := s.input.dropEnd 1 |>.toString }, false)
-  | .input (.key .enter _), s =>
+  | .key .esc _ _, s => pure (s, true)
+  | .key (.char 'c') { ctrl := true, .. } _, s => pure (s, true)
+  | .key .up _ _, s => pure ({ s with selected := s.selected - 1 }, false)
+  | .key .down _ _, s => pure ({ s with selected := min (s.selected + 1) (s.items.size - 1) }, false)
+  | .key .backspace _ _, s => pure ({ s with input := s.input.dropEnd 1 |>.toString }, false)
+  | .key .enter _ _, s =>
     if s.input.isEmpty then pure (s, false)
     else pure ({ s with items := s.items.push s.input, input := "", selected := s.items.size }, false)
-  | .input (.key (.char c) m), s =>
+  | .key (.char c) m _, s =>
     if m.ctrl || m.alt then pure (s, false) else pure ({ s with input := s.input.push c }, false)
-  | .input (.paste text), s => pure ({ s with input := s.input ++ (pasted text).text }, false)
+  | .paste p _, s => pure ({ s with input := s.input ++ p.text }, false)
   | .custom (), s => pure ({ s with beats := s.beats + 1 }, false)
   | _, s => pure (s, false)
 

@@ -57,6 +57,8 @@ inductive Op (cs : Charset) where
   | sgr (s : Style)
   | clear
   | print (g : Glyph cs)
+  /-- Set the window's title, to text the program wrote. -/
+  | title (t : Text cs .app)
 
 variable {cs : Charset}
 
@@ -65,6 +67,7 @@ def Op.chars : Op cs → List Char
   | .sgr s => csiChars (sgrCodes s) 'm'
   | .clear => csiChars [2] 'J'
   | .print g => [g.char]
+  | .title t => '\x1b' :: ']' :: '0' :: ';' :: (t.text.toList ++ ['\x07'])
 
 /-- What a terminal makes of an operation. -/
 def Op.token : Op cs → Token
@@ -72,14 +75,17 @@ def Op.token : Op cs → Token
   | .sgr s => .csi (paramChars (sgrCodes s)) [] 'm'
   | .clear => .csi (paramChars [2]) [] 'J'
   | .print g => .print g.char
+  | .title t => .osc ('0' :: ';' :: t.text.toList)
 
 def encode (ops : List (Op cs)) : String := String.ofList (ops.flatMap Op.chars)
 
-/-- The tokens of Tessera's own output: a character that only prints, or one of its control
-sequences, moving the cursor (`H`), setting the style (`m`) or clearing the screen (`J`). -/
+/-- The tokens of Tessera's own output: a character that only prints; one of its control
+sequences, moving the cursor (`H`), setting the style (`m`) or clearing the screen (`J`); or the
+command setting the window's title, to characters that only print. -/
 def Own : Token → Prop
   | .print c => Inert c
   | .csi ps [] f => (∀ p ∈ ps, isParam p) ∧ (f = 'H' ∨ f = 'm' ∨ f = 'J')
+  | .osc ('0' :: ';' :: t) => ∀ c ∈ t, Inert c
   | _ => False
 
 theorem isParam_of_isDigit {c : Char} (h : c.isDigit) : isParam c := by
@@ -118,6 +124,15 @@ theorem run_op (op : Op cs) (rest : List Char) :
     have := run_inert (l := [g.char])
       (fun c hc => by simp at hc; subst hc; exact inert_of_text (.inl g.printable)) rest
     simpa [Op.chars, Op.token] using this
+  | title t =>
+    have hb : ∀ c ∈ '0' :: ';' :: t.text.toList, Inert c := by
+      intro c hc
+      simp only [List.mem_cons] at hc
+      rcases hc with rfl | rfl | hc
+      · exact ⟨by decide, by decide, by decide⟩
+      · exact ⟨by decide, by decide, by decide⟩
+      · exact inert_of_text (t.charsOk c hc)
+    simpa [Op.chars, Op.token] using run_osc hb rest
 
 /-- A terminal reads Tessera's output as exactly the operations it encodes. -/
 theorem output_only_own (ops : List (Op cs)) : tokens (encode ops).toList = ops.map Op.token := by
@@ -132,6 +147,7 @@ theorem own_token (op : Op cs) : Own op.token := by
   | sgr => exact ⟨paramChars_param _, .inr (.inl rfl)⟩
   | clear => exact ⟨paramChars_param _, .inr (.inr rfl)⟩
   | print g => exact inert_of_text (.inl g.printable)
+  | title t => exact fun c hc => inert_of_text (t.charsOk c hc)
 
 /-- Every token of Tessera's output is its own: a character that only prints, or one of its
 control sequences. -/

@@ -101,4 +101,35 @@ example (b : Widget Charset.standard .remote) (a : Widget Charset.standard .app)
 #guard_msgs in
 example : RemoteStyle := { reverse := true }
 
+/-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.UserInput` is marked as private -/
+#guard_msgs in
+example : UserInput := ⟨⟩
+
+/-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.Designation` is marked as private -/
+#guard_msgs in
+example (u : Url) : Designation u := ⟨⟩
+
+/-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.Confirmed` is marked as private -/
+#guard_msgs in
+example (c : Confirmation Charset.standard) : Confirmed c := ⟨⟩
+
+/--
+error: Type mismatch
+  fun x => openLink u x
+has type
+  Designation u → IO Unit
+but is expected to have type
+  IO Unit
+-/
+#guard_msgs in
+example (u : Url) : IO Unit := openLink u
+
+/--
+error: Invalid field `toMsg`: The environment does not contain `Tessera.Incoming.toMsg`, so it is not possible to project the field `toMsg` from an expression
+  Incoming.terminal (CrosstermFfi.Event.key CrosstermFfi.Key.enter)
+of type `Incoming Unit`
+-/
+#guard_msgs in
+example : Msg Unit := (Incoming.terminal (.key .enter) : Incoming Unit).toMsg
+
 end Tessera.Tests.Rejects
