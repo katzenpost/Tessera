@@ -32,5 +32,9 @@ root = "Demo"
 srcDir = "examples"
 
 [[lean_exe]]
+name = "tessera-vterm"
+root = "Tessera.Tests.VTerm"
+
+[[lean_exe]]
 name = "tessera-bench"
 root = "Tessera.Bench.Main"

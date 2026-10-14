@@ -18,3 +18,17 @@ jobs:
           lint: false
       - name: Build, check the proofs and run the tests
         run: make ci
+
+  vterm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install libvterm
+        run: sudo apt-get update && sudo apt-get install -y libvterm-dev pkg-config
+      - uses: leanprover/lean-action@v1
+        with:
+          build: false
+          test: false
+          lint: false
+      - name: Check the output on libvterm
+        run: make vterm

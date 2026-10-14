@@ -7,7 +7,7 @@ LAKE  ?= lake
 BIN   := .lake/build/bin
 
 # Bare `lake build` builds only the library, so the executables are named.
-EXES := tessera-test tessera-demo tessera-bench
+EXES := tessera-test tessera-vterm tessera-demo tessera-bench
 
 # Extra LeanBench flags, e.g. `make bench BENCH_ARGS='--match diff --samples 5'`.
 BENCH_ARGS ?=
@@ -17,7 +17,7 @@ BENCH := $(LAKE) -q --log-level=error exe tessera-bench
 
 .DEFAULT_GOAL := help
 
-.PHONY: all build test sorries ci bench bench-text bench-draw demo clean help
+.PHONY: all build test sorries ci vterm bench bench-text bench-draw demo clean help
 
 all: build ## build everything, library and executables
 
@@ -36,6 +36,12 @@ sorries: ## fail if any declaration stands on sorry or native_decide
 	else echo "no sorries"; fi
 
 ci: sorries test ## everything CI runs: the proofs, the rejects, the axioms and the suites
+
+# Needs libvterm (Debian and Ubuntu: libvterm-dev), so it is not part of `ci`; CI runs it as a job
+# of its own.
+vterm: build ## check the output, and every character's width, on libvterm
+	cc -O2 -Wall -o $(BIN)/vterm_screen tests/vterm/vterm_screen.c $$(pkg-config --cflags --libs vterm)
+	@LEAN_ABORT_ON_PANIC=1 $(BIN)/tessera-vterm $(BIN)/vterm_screen
 
 bench: build ## run every benchmark; pass LeanBench flags via BENCH_ARGS
 	@$(BENCH) $(BENCH_ARGS)

@@ -40,7 +40,7 @@ def runWith (msgs : List (Incoming String)) (w h : Nat) : IO Run := do
   let ws ← writes.get
   -- A resize changes the size the model terminal draws into.
   let size := msgs.foldl (fun s m => match m with | .terminal (.resize w h) => (w, h) | _ => s) (w, h)
-  let shown := (ws.foldl (fun t s => t.run s) (Terminal.new size.1 size.2)).screen.lines
+  let shown := (ws.foldl (fun t s => t.run s) (Terminal.new (cs := CS) size.1 size.2)).screen.lines
   return { final, writes := ws, shown, left := ← queue.get }
 
 def plus : Incoming String := .terminal (.key (.char '+'))
