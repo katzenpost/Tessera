@@ -74,7 +74,8 @@ def view (l : ListView α) (row : α → Widget cs o) : Widget cs o :=
   Widget.sized fun ctx =>
     let offset := scrollTo l.offset l.selected ctx.height
     let shown := (l.items.toList.zipIdx.drop offset).take ctx.height
-    Widget.vBox <| shown.map fun (a, i) =>
+    -- The rest of the height given is blank, so that a list takes the room it asks for.
+    Widget.vBox <| (· ++ [Widget.fill]) <| shown.map fun (a, i) =>
       -- One row an item, as the scrolling counts them; the selected one in reverse video across
       -- the whole width, with a fill after it unless it already takes the width itself.
       let r := row a
