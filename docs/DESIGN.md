@@ -160,13 +160,19 @@ A widget draws itself into the space it is given, and its result type says it fi
 On each axis a widget is either **fixed**, taking only the room it needs, or **greedy**, taking all the room it is given. A box gives its fixed children their room first and shares what is left among the greedy ones. This way `hBox [str label, txt body]` keeps the label whole and wraps the body in the rest of the line.
 
 The widgets are:
-- **text:** `str` draws one line, `strs` one line per row, and `txt` wraps. Each takes `Text`, never a `String`;
+- **text:** `str` draws one line, `strs` one line per row, and `txt` wraps. Each takes `Text`, never a `String`. `txt` wraps with `Text.wrap`, which breaks between whole characters, each with its accents, and returns lines of type `Fits cs o n`, each carrying the proof that it is at most `n` cells wide (`wrap_width_le`);
 - **space:** `fill`;
 - **layout:** `hBox` and `vBox`;
 - **frames:** `border` and `borderWithLabel`;
 - **size:** `pad`, `hLimit` and `vLimit`;
 - **position:** `center` and `viewport`;
-- **style:** `withStyle`.
+- **style:** `withStyle`;
+- **by size:** `sized`, a widget chosen by the space it is given.
+
+Three widgets hold state of their own, updated by an application's messages:
+- **`Input`** is a line to type into. It holds the characters before the cursor and those after it, so the cursor is always between two characters and never past the end. What is typed or pasted goes through `Untrusted.line` together with the character before the cursor, so an accent joins its letter. A pasted newline shows as `␊` and never sends the line; only Enter does, through `Input.update`, which returns the line for `Typed.classify`. The cursor is a cell in reverse video, not the terminal's own cursor, and `cursor_visible` shows the line scrolls to keep it in view.
+- **`ListView`** is a list with one item selected, moved by keys, the mouse wheel and clicks. It scrolls only when the selection would leave the rows shown, and `selected_visible` shows the rows drawn always hold the selected item.
+- **`Widget.table`** lays text out in columns of fixed widths, shares, or the width of their widest cell. `fitWidths_le` shows the columns and the space between them never take more than the width given; each cell is cut to its column.
 
 Each widget proves that its image fits from the proofs its children's images carry, so the bound for a whole tree follows from the bound for each node. `Widget.draw w width height` returns a `Buffer cs width height`: a frame exactly the size of the screen.
 
@@ -209,6 +215,8 @@ Senders style their text with a **`RemoteStyle`**: one of the eight basic colour
 - **`RemoteStyle.not_reserved`:** no remote style is reserved.
 - **`RemoteStyle.reserved_over`:** laying a remote style over an inherited one gives a reserved style only where the inherited one already was.
 
+A terminal may show fewer colours than a style asks for, and a user may ask for none with `NO_COLOR`. `App.run` reads the colour depth from the environment (`Depth.detect`) and draws each frame through `Style.downgrade`, which maps 24-bit colour to the 256-colour palette and either to the 16 colours. **`reserved_downgrade`** shows a style is exactly as reserved after this as before. A reserved style that only its colour reserved, such as the bright green of a verified contact, would otherwise become a plain one under `NO_COLOR`, so it is shown in reverse video instead.
+
 ## Drawing
 
 ```lean
@@ -218,12 +226,18 @@ inductive Op (cs : Charset)
   | clear
   | print (g : Glyph cs)
   | title (t : Text cs .app)
+  | enterInline (rows : Nat)
+  | leaveInline (rows : Nat)
+  | image (g : Graphics) (p : Pixels)
 ```
 
 Everything Tessera writes to the terminal is an `Op`, and `Ansi.encode` gives the characters of a list of them:
 - Text reaches the terminal through `print`, which takes a glyph, and `title`, which takes text the program wrote. No operation places text from elsewhere inside an escape sequence.
 - No operation asks the terminal a question, so none can make the terminal type a reply into the program.
 - No operation reads or writes the clipboard.
+- A picture is `Pixels` Tessera holds, encoded by Tessera as sixel or as kitty graphics commands. Each body is built from numbers and is printable ASCII (`Plain`), so it can neither end its control string early nor hold an escape sequence. A picture from elsewhere is read from binary PPM, in Lean, up to `Pixels.maxPixels`, and only its pixels are kept. Whether the terminal shows pictures is configured (`App.graphics`), since Tessera asks the terminal nothing.
+
+A frame is placed on the whole screen, in the alternate screen, or **inline**, in a number of rows below the cursor, with the scrollback above left as it was (`Placement.inline`). Inline, `enterInline` makes room and has the terminal remember where the frame starts (ESC 7). A move is then a return there (ESC 8) followed by moves down and right, and clearing clears from there down. `leaveInline` leaves the cursor on the line after the frame. The same operations are drawn either way; only their encoding changes.
 
 `diffOps old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. A two-cell glyph is written again when either of its halves changed. When the screen changes size, `redrawOps new` clears it and draws the whole frame. `diff` and `redraw` are their encodings, and they are all `App.run` writes.
 
@@ -242,14 +256,24 @@ It takes every introducer a terminal might honour: ESC, and the C1 controls that
 Four theorems state Tessera's guarantees against this model:
 - **`text_tokens_print`:** the characters of any `Text`, in any charset, are read as printed characters and nothing else. It follows from the `Charset` laws, through `inert_of_text`, and assumes nothing about any particular terminal.
 - **`run_csi`** and **`run_osc`:** a control sequence of parameter bytes and a final byte, and an operating system command whose body only prints, are each read as one token, and leave the parser in its ground state.
-- **`output_only_own`:** reading the encoding of a list of operations gives back exactly those operations' tokens, in order.
-- **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is a printed character that only prints, one of Tessera's control sequences, which move the cursor (`H`), set the style (`m`) or clear the screen (`J`), or the command setting the window's title to characters that only print.
+- **`output_only_own`:** reading the encoding of a list of operations, whole screen or inline, gives back exactly those operations' tokens, in order. `run_str` reads a picture's control string as one token.
+- **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is one of:
+  - a printed character that only prints;
+  - one of Tessera's control sequences, which move the cursor (`H`, or `A`, `B` and `C` by a count), set the style (`m`) or clear the screen (`J`);
+  - remembering the cursor's place and returning to it (ESC 7, ESC 8);
+  - a carriage return or a line feed;
+  - the command setting the window's title to characters that only print;
+  - a picture's control string, `P q` for sixel or `_ G` for kitty, with a body of printable ASCII.
 
 The width guarantee is stated against an `Emulator`. A `Term` is a terminal's screen, cursor and style. `Term.apply em` carries out an operation the way a terminal measuring glyphs as `em` does: moving the cursor, setting the style, clearing the screen, or printing a glyph `em.width` cells wide at the cursor and moving the cursor past it. Two theorems hold for any `em : Emulator cs`:
 - **`diff_correct`:** applying `diffOps old new` to a terminal showing `old` leaves it showing `new`, whatever its cursor and style were.
 - **`redraw_correct`:** applying `redrawOps new` to any terminal leaves it showing `new`.
 
+Inline, the model's screen is the frame's rows, counted from the place the terminal remembered, so the same theorems hold. A picture is drawn over the cells, not in them, and leaves them as they are in the model; `App.loop` draws the pictures again after any change to the cells.
+
 The proof follows `diff` cell by cell. `Sim` says that the cursor and style `diff` assumes are the terminal's. `drawRow_correct` says that while a row is drawn, the terminal's row is the cells of `new` passed so far, followed by what is left of the row it showed. Every glyph is printed where Tessera computed, and the cursor ends where the next one begins, so no text drifts into the cell beside it. `em.agrees` is used exactly where a glyph's width is: everything else holds for any terminal.
+
+`make vterm` checks that assumption against a real emulator, libvterm. It gives each of the characters `Charset.standard` allows to libvterm and compares the width libvterm gives it with the charset's, naming every character that disagrees. It also draws random frames over each other, on the whole screen and inline, and the hostile corpus in a frame, and checks that libvterm shows each as drawn and that no title is set. CI runs it as a job of its own.
 
 ## Applications
 
@@ -259,24 +283,30 @@ structure App (cs : Charset) (σ ε : Type) where
   update : Msg ε → σ → IO (σ × Bool)
   title : σ → Option (Text cs .app) := fun _ => none
   tickMs : Option UInt32 := none
+  mouse : Bool := false
+  graphics : Option Graphics := none
+  pictures : σ → List Picture := fun _ => []
 
 inductive Msg (ε : Type)
   | key (k : Key) (m : Modifiers) (u : UserInput)
   | paste (p : Untrusted.Pasted) (u : UserInput)
+  | mouse (e : MouseEvent) (u : UserInput)
+  | focus (gained : Bool)
   | resize (width height : Nat)
   | tick
   | custom (e : ε)
 ```
 
 `App.run` sets up the terminal, runs the application, and restores the terminal afterwards. It does the following:
-- Enters raw mode and the alternate screen, hides the cursor, and enables bracketed paste.
+- Enters raw mode and the alternate screen, or makes room for an inline frame. Hides the cursor, and enables bracketed paste and focus reporting, and mouse capture if the application asks for it.
+- Reads the colour depth from the environment, and draws every frame in the colours the terminal shows.
 - Reads terminal events on one task and timer ticks on another, each arriving as an `Incoming` message.
 - Gives `start` a function that sends the application events of its own from any task, as `Incoming.custom`.
 - Draws the first frame, then updates and draws again for each message. It writes the window's title when the application sets one and when it changes.
 - Takes in every message already waiting before drawing the next frame, so a flood of messages is drawn once.
 - In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell. An exception's text, which may quote text from elsewhere, is filtered with `Untrusted.lines` before it is printed.
 
-`App.loop` turns what arrives into a `Msg`. A key or a paste that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A paste arrives as a `Pasted`, without bracketed paste's markers.
+`App.loop` turns what arrives into a `Msg`. A key, a paste or a mouse event that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A mouse event's position is the screen's, so an inline application, which does not know which row it starts on, does not capture the mouse. A paste arrives as a `Pasted`, without bracketed paste's markers.
 
 ### Consent
 
@@ -291,6 +321,8 @@ inductive Msg (ε : Type)
 - `enter_not_confirm` and `y_not_confirm`: Enter and `y` alone are not the confirming key.
 
 Anything else leaves the question unanswered, which is the safe answer.
+
+When the window regains the focus, `Confirmation.refocus` starts the delay again, so a key pressed by someone just back at the window does not answer a question they have not seen (`answer_refocus`).
 
 A **`Url`** carries proofs that it begins with `https://` or `http://` and holds only printable ASCII with no space. `Url.head` shows it begins with `h`, so a program it is passed to cannot take it for an option. `openLink` runs the opener with the link as one argument, through no shell, with the opener's output kept off the screen.
 
@@ -315,5 +347,6 @@ A **`Log`** takes only `Text`, so a log that someone later reads with `cat` or `
   - text from elsewhere where the program's must be: as `Text cs .app`, in a `Widget cs .app`, or in a `Frame`'s header;
   - a widget passed off as the program's: one of the program's own making as `Widget cs .app`, or one built with `Widget`'s private constructor;
   - a sender style with reverse video;
-  - consent not given: a `UserInput`, `Designation` or `Confirmed` built by hand, `openLink` without a `Designation`, or `Incoming.toMsg` called outside `App.loop`.
+  - consent not given: a `UserInput`, `Designation` or `Confirmed` built by hand, a mouse event made outside `App.loop`, `openLink` without a `Designation`, or `Incoming.toMsg` called outside `App.loop`;
+  - a picture made of a string, not of pixels.
 - The randomized and corpus tests in `Tests/` drive the compiled code with hostile input. The model terminal they draw on reads output with `VT.tokens`, the parser the theorems are stated against. The theorems cover Tessera's model of the terminal; the tests cover the code as it runs.

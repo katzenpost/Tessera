@@ -25,10 +25,11 @@ open Tessera
 /-- Run the shim with `args`, `input` on its standard input. -/
 def shim (path : String) (args : Array String) (input : String) : IO String := do
   let child ← IO.Process.spawn { cmd := path, args, stdin := .piped, stdout := .piped }
+  -- Read while writing, or a long output fills the pipe and both sides wait.
+  let out ← IO.asTask child.stdout.readToEnd .dedicated
   let (stdin, child) ← child.takeStdin
   stdin.putStr input
   stdin.flush
-  let out ← IO.asTask child.stdout.readToEnd
   let _ ← child.wait
   IO.ofExcept out.get
 
