@@ -136,4 +136,17 @@ of type `Incoming Unit`
 #guard_msgs in
 example : Msg Unit := (Incoming.terminal (.key .enter) : Incoming Unit).toMsg
 
+/--
+error: Application type mismatch: The argument
+  "\x1b]0;x\x07"
+has type
+  String
+but is expected to have type
+  Pixels
+in the application
+  Ansi.Op.image Graphics.sixel "\x1b]0;x\x07"
+-/
+#guard_msgs in
+example : Ansi.Op Charset.standard := .image .sixel "\x1b]0;x\x07"
+
 end Tessera.Tests.Rejects

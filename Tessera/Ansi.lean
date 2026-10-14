@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import Tessera.Buffer
 import Tessera.VT
+import Tessera.Image
 
 /-! # What Tessera writes to the terminal
 
@@ -80,6 +81,8 @@ inductive Op (cs : Charset) where
   | enterInline (rows : Nat)
   /-- Put the cursor on the line after an inline frame of `rows` rows. -/
   | leaveInline (rows : Nat)
+  /-- Show a picture at the cursor, as `g` shows them. -/
+  | image (g : Graphics) (p : Pixels)
 
 variable {cs : Charset}
 
@@ -101,6 +104,9 @@ def Op.chars (p : Placement) : Op cs → List Char
   | .enterInline n =>
     '\r' :: (List.replicate (n - 1) '\n' ++ relChars (n - 1) 'A' ++ ['\x1b', '7'])
   | .leaveInline n => '\x1b' :: '8' :: (relChars (n - 1) 'B' ++ ['\r', '\n'])
+  | .image .sixel px => '\x1b' :: 'P' :: ('q' :: (plain (Sixel.body px)).1 ++ ['\x1b', '\\'])
+  | .image .kitty px => (Kitty.bodies px).flatMap fun b =>
+    '\x1b' :: '_' :: ('G' :: (plain b).1 ++ ['\x1b', '\\'])
 
 /-- What a terminal makes of an operation. -/
 def Op.tokens (p : Placement) : Op cs → List Token
@@ -116,6 +122,8 @@ def Op.tokens (p : Placement) : Op cs → List Token
   | .enterInline n =>
     .control '\r' :: (List.replicate (n - 1) (.control '\n') ++ relTokens (n - 1) 'A' ++ [.esc [] '7'])
   | .leaveInline n => .esc [] '8' :: (relTokens (n - 1) 'B' ++ [.control '\r', .control '\n'])
+  | .image .sixel px => [.str 'P' ('q' :: (plain (Sixel.body px)).1)]
+  | .image .kitty px => (Kitty.bodies px).map fun b => .str '_' ('G' :: (plain b).1)
 
 def encode (ops : List (Op cs)) (p : Placement := .fullscreen) : String :=
   String.ofList (ops.flatMap (Op.chars p))
@@ -123,14 +131,16 @@ def encode (ops : List (Op cs)) (p : Placement := .fullscreen) : String :=
 /-- The tokens of Tessera's own output: a character that only prints; one of its control
 sequences, moving the cursor (`H`, or `A`, `B` and `C` by a number of cells), setting the style
 (`m`) or clearing the screen (`J`); remembering the cursor's place (ESC 7) and returning to it
-(ESC 8); a carriage return and a line feed; or the command setting the window's title, to
-characters that only print. -/
+(ESC 8); a carriage return and a line feed; the command setting the window's title, to
+characters that only print; or a picture, as sixel or kitty graphics, in printable ASCII. -/
 def Own : Token → Prop
   | .print c => Inert c
   | .csi ps [] f => (∀ p ∈ ps, isParam p) ∧ f ∈ ['H', 'm', 'J', 'A', 'B', 'C']
   | .osc ('0' :: ';' :: t) => ∀ c ∈ t, Inert c
   | .esc [] f => f = '7' ∨ f = '8'
   | .control c => c = '\r' ∨ c = '\n'
+  | .str 'P' ('q' :: b) => ∀ c ∈ b, Plain c
+  | .str '_' ('G' :: b) => ∀ c ∈ b, Plain c
   | _ => False
 
 theorem isParam_of_isDigit {c : Char} (h : c.isDigit) : isParam c := by
@@ -182,6 +192,35 @@ theorem run_lf (n : Nat) (rest : List Char) :
   | succ n ih =>
     rw [List.replicate_succ, List.cons_append, run_control (.inr rfl), ih]; rfl
 
+theorem run_str_body {i : Char} {body : List Char} (hb : ∀ c ∈ body, Plain c) (acc rest : List Char) :
+    run (.str i acc) (body ++ '\x1b' :: '\\' :: rest) = .str i (acc ++ body) :: run .ground rest := by
+  induction body generalizing acc with
+  | nil => simp [run, step, isST]
+  | cons c t ih =>
+    obtain ⟨h1, h2⟩ := hb c (List.mem_cons_self ..)
+    have hst : isST c = false := by simp [isST]; omega
+    have hesc : (c == '\x1b') = false := by
+      rw [beq_eq_false_iff_ne]; rintro rfl; simp at h1
+    simp only [List.cons_append, run, step, hst, hesc, Bool.false_eq_true, ↓reduceIte,
+      List.nil_append]
+    rw [ih (fun x hx => hb x (List.mem_cons_of_mem _ hx))]
+    simp
+
+/-- A control string that only `Plain` characters, after its first, is read as one, ended by ST,
+and the terminal is in its ground state after it. -/
+theorem run_str {i : Char} (hi : i = 'P' ∨ i = '_') {body : List Char} (hb : ∀ c ∈ body, Plain c)
+    (rest : List Char) :
+    run .ground ('\x1b' :: i :: (body ++ '\x1b' :: '\\' :: rest)) = .str i body :: run .ground rest := by
+  have h := run_str_body (i := i) hb [] rest
+  simp only [List.nil_append] at h
+  rcases hi with rfl | rfl <;> simp [run, step, stepGround, afterEsc, h]
+
+theorem plain_cons {c : Char} (hc : Plain c) {l : List Char} (hl : ∀ x ∈ l, Plain x) :
+    ∀ x ∈ c :: l, Plain x := by
+  intro x hx; rcases List.mem_cons.mp hx with rfl | hx
+  · exact hc
+  · exact hl x hx
+
 theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
     run .ground (op.chars p ++ rest) = op.tokens p ++ run .ground rest := by
   cases op with
@@ -220,6 +259,26 @@ theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
     simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
     rw [run_esc (.inr rfl), run_rel _ (by decide), run_control (.inl rfl), run_control (.inr rfl)]
     simp
+  | image g px =>
+    cases g with
+    | sixel =>
+      simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc, List.singleton_append]
+      have := run_str (i := 'P') (.inl rfl) (plain_cons (c := 'q') (by decide) (plain (Sixel.body px)).2) rest
+      simpa using this
+    | kitty =>
+      simp only [Op.chars, Op.tokens]
+      generalize Kitty.bodies px = bs
+      induction bs with
+      | nil => rfl
+      | cons b bs ih =>
+        have e : ('\x1b' :: '_' :: ('G' :: (plain b).1 ++ ['\x1b', '\\'])) ++
+            (bs.flatMap (fun b => '\x1b' :: '_' :: ('G' :: (plain b).1 ++ ['\x1b', '\\'])) ++ rest) =
+            '\x1b' :: '_' :: (('G' :: (plain b).1) ++ '\x1b' :: '\\' ::
+              (bs.flatMap (fun b => '\x1b' :: '_' :: ('G' :: (plain b).1 ++ ['\x1b', '\\'])) ++ rest)) := by
+          simp
+        rw [List.flatMap_cons, List.append_assoc, e,
+          run_str (.inr rfl) (plain_cons (c := 'G') (by decide) (plain b).2), ih]
+        rfl
 
 /-- A terminal reads Tessera's output as exactly the tokens of the operations it encodes. -/
 theorem output_only_own (ops : List (Op cs)) (p : Placement := .fullscreen) :
@@ -274,6 +333,13 @@ theorem own_tokens (p : Placement) (op : Op cs) : ∀ t ∈ op.tokens p, Own t :
     · exact own_rel _ (by simp) t h
     · exact .inl rfl
     · exact .inr rfl
+  | image g px =>
+    cases g with
+    | sixel => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact (plain _).2
+    | kitty =>
+      simp only [Op.tokens, List.mem_map]
+      rintro t ⟨b, _, rfl⟩
+      exact (plain b).2
 
 /-- Every token of Tessera's output is its own: a character that only prints, or one of its
 controls and sequences. -/

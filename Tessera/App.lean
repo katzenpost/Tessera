@@ -60,6 +60,14 @@ private def Incoming.toMsg {ε : Type} : Incoming ε → Msg ε
   | .tick => .tick
   | .custom e => .custom e
 
+/-- A picture shown with its top left corner on column `x`, row `y`, over the frame. -/
+structure Picture where
+  x : Nat
+  y : Nat
+  pixels : Pixels
+
+instance : BEq Picture := ⟨fun a b => a.x == b.x && a.y == b.y && a.pixels == b.pixels⟩
+
 /-- An application with state `σ` and events of its own of type `ε`, drawn with the characters
 `cs` allows. -/
 structure App (cs : Charset) (σ ε : Type) where
@@ -74,6 +82,12 @@ structure App (cs : Charset) (σ ε : Type) where
   /-- Whether to capture the mouse, and receive `Msg.mouse`. A terminal that captures the mouse
   leaves selecting text to Shift and the mouse. -/
   mouse : Bool := false
+  /-- How the terminal shows pictures, if it does: the application is told, by its user or its
+  configuration, as Tessera asks the terminal nothing. -/
+  graphics : Option Graphics := none
+  /-- The pictures shown over the frame, where it leaves room for them. They are drawn again
+  whenever the frame changes, as a change to the cells under one may draw over it. -/
+  pictures : σ → List Picture := fun _ => []
 
 /-- The colour depth the environment asks for: none if `NO_COLOR` is set, 24-bit if `COLORTERM`
 says so, 256 colours if `TERM` does, and 16 otherwise. -/
@@ -107,13 +121,20 @@ partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Inco
   let (w, h) ← screen.size
   let h := screen.placement.height h
   let frame := render init w h
-  screen.write (redraw frame screen.placement ++ titleOutput none (app.title init))
-  go init w h frame (app.title init)
+  screen.write (redraw frame screen.placement ++ titleOutput none (app.title init) ++
+    pictureOutput (app.pictures init))
+  go init w h frame (app.title init) (app.pictures init)
 where
   /-- The frame for `s`, in the colours the terminal shows. -/
   render (s : σ) (w h : Nat) : Buffer cs w h :=
     let frame := (app.draw s).draw w h
     if depth = .truecolor then frame else frame.mapStyle (Style.downgrade depth)
+  /-- The pictures, if the terminal shows them. -/
+  pictureOutput (ps : List Picture) : String :=
+    match app.graphics with
+    | some g => Ansi.encode (cs := cs)
+        (ps.flatMap fun p => [.moveTo p.x p.y, .image g p.pixels]) screen.placement
+    | none => ""
   /-- The title, written when it changes. -/
   titleOutput (shown new : Option (Text cs .app)) : String :=
     match new with
@@ -133,7 +154,8 @@ where
     let some i ← ready | return (s, w, h, false)
     let (s, w, h, quit) ← step s w h i
     if quit then return (s, w, h, true) else drain s w h
-  go (s : σ) (w h : Nat) (shown : Buffer cs w h) (title : Option (Text cs .app)) : IO σ := do
+  go (s : σ) (w h : Nat) (shown : Buffer cs w h) (title : Option (Text cs .app))
+      (pictures : List Picture) : IO σ := do
     let some i ← next | return s
     let (s, w', h', quit) ← step s w h i
     if quit then return s
@@ -142,8 +164,10 @@ where
     let frame := render s w' h'
     let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame screen.placement
       else redraw frame screen.placement
-    screen.write (out ++ titleOutput title (app.title s))
-    go s w' h' frame (app.title s)
+    let ps := app.pictures s
+    let pics := if out.isEmpty && ps == pictures then "" else pictureOutput ps
+    screen.write (out ++ titleOutput title (app.title s) ++ pics)
+    go s w' h' frame (app.title s) ps
 
 /-- The terminal, through crossterm and standard output, with frames placed by `placement`. -/
 def terminal (placement : Ansi.Placement := .fullscreen) : IO Screen := do
