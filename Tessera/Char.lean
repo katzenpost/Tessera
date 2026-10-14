@@ -192,8 +192,13 @@ structure Charset where
   /-- Control Pictures, U+2400 to U+2426, so that any charset can show a stand-in for a
   character it refuses. -/
   controlPicture_printable : ∀ n ≤ 0x26, Printable (Char.ofNat (0x2400 + n))
+  /-- Printable ASCII is one cell wide, as every terminal draws it. -/
+  ascii_width : ∀ c, 0x20 ≤ c.toNat → c.toNat ≤ 0x7E → width c = 1
 
 attribute [instance] Charset.decPrintable
+
+theorem Charset.space_width (cs : Charset) : cs.width ' ' = 1 :=
+  cs.ascii_width ' ' (by decide) (by decide)
 
 theorem Charset.printable_of_ascii (cs : Charset) {c : Char} (h1 : 0x20 ≤ c.toNat)
     (h2 : c.toNat ≤ 0x7E) : cs.Printable c := by
@@ -236,7 +241,8 @@ theorem isPrintable_zeroWidth {c : Char} (h : isPrintable c = true) : zeroWidth 
 
 /-- The laws every charset allowing exactly `isPrintable` satisfies, whatever widths it gives. -/
 def Charset.ofPrintable (width : Char → Nat)
-    (hw : ∀ c, isPrintable c = true → width c = 1 ∨ width c = 2) : Charset where
+    (hw : ∀ c, isPrintable c = true → width c = 1 ∨ width c = 2)
+    (hascii : ∀ c, 0x20 ≤ c.toNat → c.toNat ≤ 0x7E → width c = 1) : Charset where
   Printable c := isPrintable c = true
   width := width
   printable_width := hw
@@ -250,6 +256,7 @@ def Charset.ofPrintable (width : Char → Nat)
       (inRanges_iff.mpr ⟨(0x300, 0x36F), List.mem_singleton_self _, hc⟩)
   ascii_printable := by decide
   controlPicture_printable := by decide
+  ascii_width := hascii
 
 theorem charWidth_printable {c : Char} (h : isPrintable c = true) : charWidth c = 1 ∨ charWidth c = 2 := by
   simp only [charWidth, isPrintable_zeroWidth h, Bool.false_eq_true, ↓reduceIte]
@@ -265,10 +272,37 @@ theorem cjkWidth_printable {c : Char} (h : isPrintable c = true) : cjkWidth c = 
   simp only [cjkWidth, isPrintable_zeroWidth h, Bool.false_eq_true, ↓reduceIte]
   split <;> simp
 
+theorem inRanges_below {n : Nat} {rs : List (Nat × Nat)} (h : ∀ r ∈ rs, n < r.1) :
+    inRanges n rs = false := by
+  cases hr : inRanges n rs
+  · rfl
+  · obtain ⟨r, hr, h1, _⟩ := inRanges_iff.mp hr
+    have := h r hr
+    omega
+
+set_option maxRecDepth 4000 in
+theorem ascii_narrow {c : Char} (h1 : 0x20 ≤ c.toNat) (h2 : c.toNat ≤ 0x7E) :
+    zeroWidth c.toNat = false ∧ doubleWidth c.toNat = false ∧ ambiguous c.toNat = false := by
+  have below : ∀ rs : List (Nat × Nat), (∀ r ∈ rs, 0x7E < r.1) → inRanges c.toNat rs = false :=
+    fun rs h => inRanges_below fun r hr => by have := h r hr; omega
+  refine ⟨?_, below doubleWidthRanges (by decide), below ambiguousRanges (by decide)⟩
+  simp only [zeroWidth, below _ (by decide : ∀ r ∈ zeroWidthRanges, 0x7E < r.1), Bool.or_false,
+    Bool.or_eq_false_iff, decide_eq_false_iff_not, Bool.and_eq_false_iff, beq_eq_false_iff_ne]
+  omega
+
+theorem charWidth_ascii (c : Char) (h1 : 0x20 ≤ c.toNat) (h2 : c.toNat ≤ 0x7E) : charWidth c = 1 := by
+  obtain ⟨hz, hd, _⟩ := ascii_narrow h1 h2
+  simp [charWidth, hz, hd]
+
+theorem cjkWidth_ascii (c : Char) (h1 : 0x20 ≤ c.toNat) (h2 : c.toNat ≤ 0x7E) : cjkWidth c = 1 := by
+  obtain ⟨hz, hd, ha⟩ := ascii_narrow h1 h2
+  simp [cjkWidth, hz, hd, ha]
+
 /-- The characters terminals outside CJK locales and Tessera agree on the width of. -/
-def Charset.standard : Charset := .ofPrintable charWidth fun _ => charWidth_printable
+def Charset.standard : Charset :=
+  .ofPrintable charWidth (fun _ => charWidth_printable) charWidth_ascii
 
 /-- The same characters, with East Asian ambiguous-width characters two cells wide. -/
-def Charset.cjk : Charset := .ofPrintable cjkWidth fun _ => cjkWidth_printable
+def Charset.cjk : Charset := .ofPrintable cjkWidth (fun _ => cjkWidth_printable) cjkWidth_ascii
 
 end Tessera

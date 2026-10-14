@@ -16,10 +16,10 @@ namespace Tessera.Tests.Axioms
 
 open Tessera Untrusted
 
-/-- info: 'Tessera.Charset.standard' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Tessera.Charset.standard' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Charset.standard
 
-/-- info: 'Tessera.Charset.cjk' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Tessera.Charset.cjk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Charset.cjk
 
 /-- info: 'Tessera.Row.splice' depends on axioms: [propext, Quot.sound] -/

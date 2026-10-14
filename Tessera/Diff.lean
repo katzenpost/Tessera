@@ -44,15 +44,15 @@ end DiffState
 place, or all of them if `all`. A two-cell glyph is written when either of its halves changed. -/
 def drawRow (y : Nat) (all : Bool) :
     (x : Nat) → (new old : List (Cell cs)) → DiffState cs → DiffState cs
-  | x, .glyph g s :: .wideRight s' :: ns, o₁ :: o₂ :: os, st =>
-    let st := if all || .glyph g s != o₁ || .wideRight s' != o₂ then st.write x y g 2 s else st
+  | x, .glyph g s :: .wideRight :: ns, o₁ :: o₂ :: os, st =>
+    let st := if all || .glyph g s != o₁ || .wideRight != o₂ then st.write x y g 2 s else st
     drawRow y all (x + 2) ns os st
   | x, c :: ns, o :: os, st =>
     let st := if all || c != o then
       match c with
       | .glyph g s => st.write x y g g.width s
       | .blank s => st.write x y .space 1 s
-      | .wideRight _ => st
+      | .wideRight => st
       else st
     drawRow y all (x + 1) ns os st
   | _, _, _, st => st

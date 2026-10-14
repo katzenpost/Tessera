@@ -49,8 +49,8 @@ def Charset.textWidth (cs : Charset) (s : String) : Nat :=
 
 inductive Cell (cs : Charset) where
   | glyph (g : Glyph cs) (style : Style)
-  /-- The right half of a two-cell glyph. -/
-  | wideRight (style : Style)
+  /-- The right half of a two-cell glyph, drawn in the glyph's style. -/
+  | wideRight
   | blank (style : Style)
   deriving DecidableEq
 
@@ -59,7 +59,8 @@ instance : Inhabited (Cell cs) := ⟨.blank {}⟩
 namespace Cell
 
 def style : Cell cs → Style
-  | .glyph _ s | .wideRight s | .blank s => s
+  | .glyph _ s | .blank s => s
+  | .wideRight => {}
 
 /-- The character shown: a right half shows as nothing, and is not a character of its own. -/
 def char : Cell cs → Char
@@ -67,31 +68,35 @@ def char : Cell cs → Char
   | _ => ' '
 
 def isContinuation : Cell cs → Bool
-  | .wideRight _ => true
+  | .wideRight => true
   | _ => false
 
-/-- Every two-cell glyph is followed by its right half, and a right half follows nothing else. -/
+/-- A glyph drawn in one cell: not two cells wide, and not a space, which is a blank. -/
+def Narrow (g : Glyph cs) : Bool := !g.wide && g.char != ' '
+
+/-- Every two-cell glyph is followed by its right half, a right half follows nothing else, and a
+space is a blank, so that one row shows one way. -/
 def wellFormed : List (Cell cs) → Bool
   | [] => true
-  | .wideRight _ :: _ => false
+  | .wideRight :: _ => false
   | .blank _ :: rest => wellFormed rest
-  | .glyph g _ :: .wideRight _ :: rest => g.wide && wellFormed rest
-  | .glyph g _ :: rest => !g.wide && wellFormed rest
+  | .glyph g _ :: .wideRight :: rest => g.wide && wellFormed rest
+  | .glyph g _ :: rest => Narrow g && wellFormed rest
 
 theorem wellFormed_cons_blank {s : Style} {l : List (Cell cs)} (h : wellFormed l) :
     wellFormed (.blank s :: l) := by
   simpa [wellFormed] using h
 
-theorem wellFormed_cons_narrow {g : Glyph cs} {s : Style} {l : List (Cell cs)} (hg : g.wide = false)
+theorem wellFormed_cons_narrow {g : Glyph cs} {s : Style} {l : List (Cell cs)} (hg : Narrow g)
     (h : wellFormed l) : wellFormed (.glyph g s :: l) := by
   match l with
   | [] => simp [wellFormed, hg]
-  | .wideRight _ :: _ => simp [wellFormed] at h
+  | .wideRight :: _ => simp [wellFormed] at h
   | .blank _ :: _ => simpa [wellFormed, hg] using h
   | .glyph _ _ :: _ => simpa [wellFormed, hg] using h
 
-theorem wellFormed_cons_wide {g : Glyph cs} {s s' : Style} {l : List (Cell cs)} (hg : g.wide = true)
-    (h : wellFormed l) : wellFormed (.glyph g s :: .wideRight s' :: l) := by
+theorem wellFormed_cons_wide {g : Glyph cs} {s : Style} {l : List (Cell cs)} (hg : g.wide = true)
+    (h : wellFormed l) : wellFormed (.glyph g s :: .wideRight :: l) := by
   simpa [wellFormed, hg] using h
 
 theorem wellFormed_append {a b : List (Cell cs)} (ha : wellFormed a) (hb : wellFormed b) :
@@ -100,16 +105,16 @@ theorem wellFormed_append {a b : List (Cell cs)} (ha : wellFormed a) (hb : wellF
   | case1 => simpa using hb
   | case2 => simp [wellFormed] at ha
   | case3 _ _ ih => exact wellFormed_cons_blank (ih (by simpa [wellFormed] using ha))
-  | case4 g _ _ _ ih =>
+  | case4 g _ _ ih =>
     simp only [wellFormed, Bool.and_eq_true] at ha
     exact wellFormed_cons_wide ha.1 (ih ha.2)
   | case5 g _ rest hrest ih =>
-    have ha' : g.wide = false ∧ wellFormed rest := by
+    have ha' : Narrow g ∧ wellFormed rest := by
       match rest, hrest with
       | [], _ => simpa [wellFormed] using ha
       | .blank _ :: _, _ => simpa [wellFormed] using ha
       | .glyph _ _ :: _, _ => simpa [wellFormed] using ha
-      | .wideRight _ :: _, h => exact absurd rfl (h _ _)
+      | .wideRight :: _, h => exact absurd rfl (h _)
     exact wellFormed_cons_narrow ha'.1 (ih ha'.2)
 
 theorem wellFormed_replicate_blank (n : Nat) (s : Style) :
@@ -124,7 +129,7 @@ def ofGlyphs (s : Style) : List (Glyph cs) → List (Cell cs)
   | [] => []
   | g :: gs =>
     if g.char = ' ' then .blank s :: ofGlyphs s gs
-    else if g.wide then .glyph g s :: .wideRight s :: ofGlyphs s gs
+    else if g.wide then .glyph g s :: .wideRight :: ofGlyphs s gs
     else .glyph g s :: ofGlyphs s gs
 
 theorem wellFormed_ofGlyphs (s : Style) (gs : List (Glyph cs)) : wellFormed (ofGlyphs s gs) := by
@@ -134,16 +139,17 @@ theorem wellFormed_ofGlyphs (s : Style) (gs : List (Glyph cs)) : wellFormed (ofG
     unfold ofGlyphs
     split
     · exact wellFormed_cons_blank ih
-    · cases hg : g.wide
-      · simpa [hg] using wellFormed_cons_narrow hg ih
+    · rename_i hsp
+      cases hg : g.wide
+      · simpa [hg] using wellFormed_cons_narrow (by simp [Narrow, hg, hsp]) ih
       · simpa [hg] using wellFormed_cons_wide hg ih
 
 /-- The first `n` cells; a two-cell glyph cut in half becomes a blank. -/
 def cut : Nat → List (Cell cs) → List (Cell cs)
   | 0, _ => []
   | _, [] => []
-  | n + 1, .glyph g s :: .wideRight s' :: rest =>
-    if n = 0 then [.blank s] else .glyph g s :: .wideRight s' :: cut (n - 1) rest
+  | n + 1, .glyph g s :: .wideRight :: rest =>
+    if n = 0 then [.blank s] else .glyph g s :: .wideRight :: cut (n - 1) rest
   | n + 1, c :: rest => c :: cut n rest
 
 /-- All but the first `n` cells; the right half of a two-cell glyph cut in half becomes a
@@ -151,7 +157,7 @@ blank. -/
 def skip : Nat → List (Cell cs) → List (Cell cs)
   | 0, l => l
   | _, [] => []
-  | n + 1, .glyph _ _ :: .wideRight s' :: rest => if n = 0 then .blank s' :: rest else skip (n - 1) rest
+  | n + 1, .glyph _ s :: .wideRight :: rest => if n = 0 then .blank s :: rest else skip (n - 1) rest
   | n + 1, _ :: rest => skip n rest
 
 @[simp] theorem cut_nil (n : Nat) : cut n ([] : List (Cell cs)) = [] := by
@@ -165,7 +171,7 @@ theorem length_cut (n : Nat) (l : List (Cell cs)) : (cut n l).length = min n l.l
   | case1 => simp [cut]
   | case2 x hx => simp [cut.eq_2 x hx]
   | case3 => simp [cut]
-  | case4 n g s s' rest hn ih => simp [cut, hn, ih]; omega
+  | case4 n g s rest hn ih => simp [cut, hn, ih]; omega
   | case5 n c rest hp ih => rw [cut.eq_4 _ _ _ hp]; simp [ih]
 
 theorem length_skip (n : Nat) (l : List (Cell cs)) : (skip n l).length = l.length - n := by
@@ -173,7 +179,7 @@ theorem length_skip (n : Nat) (l : List (Cell cs)) : (skip n l).length = l.lengt
   | case1 => simp [skip]
   | case2 x hx => simp [skip.eq_2 x hx]
   | case3 => simp [skip]
-  | case4 n g s s' rest hn ih => simp [skip, hn, ih]; omega
+  | case4 n g s rest hn ih => simp [skip, hn, ih]; omega
   | case5 n c rest hp ih => rw [skip.eq_4 _ _ _ hp]; simp [ih]
 
 theorem wellFormed_cut (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : wellFormed (cut n l) := by
@@ -181,21 +187,21 @@ theorem wellFormed_cut (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : wellF
   | case1 => simp [cut, wellFormed]
   | case2 x hx => rw [cut.eq_2 x hx]; rfl
   | case3 => simp [cut, wellFormed]
-  | case4 n g s s' rest hn ih =>
+  | case4 n g s rest hn ih =>
     simp only [wellFormed, Bool.and_eq_true] at h
     simpa [cut, hn] using wellFormed_cons_wide h.1 (ih h.2)
   | case5 n c rest hpair ih =>
     rw [cut.eq_4 _ _ _ hpair]
     match c, rest, hpair with
     | .blank _, rest, _ => exact wellFormed_cons_blank (ih (by simpa [wellFormed] using h))
-    | .wideRight _, _, _ => simp [wellFormed] at h
+    | .wideRight, _, _ => simp [wellFormed] at h
     | .glyph g s, [], _ => simpa [cut] using h
-    | .glyph g s, .wideRight _ :: _, hp => exact (hp g s _ _ rfl rfl).elim
+    | .glyph g s, .wideRight :: _, hp => exact (hp g s _ rfl rfl).elim
     | .glyph g s, .blank _ :: _, _ =>
-      simp only [wellFormed, Bool.and_eq_true, Bool.not_eq_true'] at h
+      simp only [wellFormed, Bool.and_eq_true] at h
       exact wellFormed_cons_narrow h.1 (ih (by simpa [wellFormed] using h.2))
     | .glyph g s, .glyph _ _ :: _, _ =>
-      simp only [wellFormed, Bool.and_eq_true, Bool.not_eq_true'] at h
+      simp only [wellFormed, Bool.and_eq_true] at h
       exact wellFormed_cons_narrow h.1 (ih (by simpa [wellFormed] using h.2))
 
 theorem wellFormed_skip (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : wellFormed (skip n l) := by
@@ -205,16 +211,16 @@ theorem wellFormed_skip (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : well
   | case3 =>
     simp only [wellFormed, Bool.and_eq_true] at h
     simpa [skip] using wellFormed_cons_blank h.2
-  | case4 n g s s' rest hn ih =>
+  | case4 n g s rest hn ih =>
     simp only [wellFormed, Bool.and_eq_true] at h
     simpa [skip, hn] using ih h.2
   | case5 n c rest hpair ih =>
     rw [skip.eq_4 _ _ _ hpair]
     match c, rest, hpair with
     | .blank _, rest, _ => exact ih (by simpa [wellFormed] using h)
-    | .wideRight _, _, _ => simp [wellFormed] at h
+    | .wideRight, _, _ => simp [wellFormed] at h
     | .glyph g s, [], _ => simp [wellFormed]
-    | .glyph g s, .wideRight _ :: _, hp => exact (hp g s _ _ rfl rfl).elim
+    | .glyph g s, .wideRight :: _, hp => exact (hp g s _ rfl rfl).elim
     | .glyph g s, .blank _ :: _, _ =>
       simp only [wellFormed, Bool.and_eq_true] at h
       exact ih (by simpa [wellFormed] using h.2)
