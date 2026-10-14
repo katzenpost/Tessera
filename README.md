@@ -39,8 +39,19 @@ def main : IO Unit := discard <| App.run { draw, update } 0
   from a paste, and `withoutControls` takes controls and bidi controls out of text passed on.
   [docs/TUI_SECURITY_GUIDELINES.md](docs/TUI_SECURITY_GUIDELINES.md) says what else a TUI showing
   such text should do, and [docs/DESIGN.md](docs/DESIGN.md) how Tessera is built to do it.
-- **Applications** get input events, optional timer ticks, and events of their own, sent from
-  any task through the function `App.run` passes to `start`.
+- **The trusted path**: the header, status bar, prompt and sender column of a `Frame` are widgets
+  of origin `.app`, which hold only text the program wrote; text from elsewhere reaches them only
+  cut and delimited by `Widget.delimited`. Senders style their text with a `RemoteStyle`, which
+  cannot be one of the program's reserved styles, and a `Roster` labels a room's members so that
+  no two look alike.
+- **Applications** get keys, pastes, resizes, optional timer ticks, and events of their own, sent
+  from any task through the function `App.run` passes to `start`. Only a key or a paste read from
+  the terminal carries a `UserInput`, from which come the `Designation` that opening a link needs
+  and the `Confirmation` an action that cannot be undone needs.
+- **Proofs**: no `Text` holds an escape sequence (`VT.text_tokens_print`); a terminal reads
+  Tessera's output as its own operations and nothing else (`diff_own`); and on a terminal that
+  measures characters as Tessera does, drawing a frame leaves it showing that frame
+  (`diff_correct`).
 
 Building needs `cargo` on the `PATH`, for crossterm.
 

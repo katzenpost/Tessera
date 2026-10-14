@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 import Tessera.Diff
 import Tessera.Untrusted
 import Tessera.VT
+import Tessera.Log
 import Tessera.Widget
 import Tessera.Tests.Util
 
@@ -92,7 +93,16 @@ def onlyCsi (out : String) : Bool :=
   let parts := out.splitOn "\x1b"
   (parts.drop 1).all (·.startsWith "[") && !out.any fun c => 0x80 ≤ c.toNat && c.toNat < 0xA0
 
+def logTests : TestM Unit := do
+  let (_, path) ← IO.FS.createTempFile
+  let log ← Log.open path
+  log.write (line (cs := CS) "evil\x1b]0;pwned\x07")
+  let read ← IO.FS.readFile path
+  IO.FS.removeFile path
+  checkEq "a log holds text as filtered" "evil␛]0;pwned␇\n" read
+
 def tests : TestM Unit := do
+  logTests
   checkEq "widths" [1, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0]
     (['a', '漢', '🦀', '🚀', '⌚', '\x07', '́', '‮', '‍', '️', '­'].map charWidth)
   checkEq "ambiguous widths in a CJK locale" [1, 2, 2, 2, 2]
@@ -142,6 +152,11 @@ def tests : TestM Unit := do
   check "names that differ do not" (skeleton (name "alice") != skeleton (name "alicia"))
   check "mixed scripts" (mixedScript (name "pаypal") && !mixedScript (name "paypal"))
   checkEq "a name cannot wear a badge" "alice ␦" (name "alice 🔒").text.text
+  let long := String.ofList (List.replicate 70000 'a')
+  checkEq "a long text is cut, and says how much"
+    " [4464 more characters not shown]"
+    (((lines (cs := CS) long).1.head!.text.drop 65536).toString)
+  check "filtering never lengthens" (((line (cs := CS) "a\x1b[31mb").text.length ≤ 7))
   checkEq "numbers as text" "1234" (Text.ofNat (cs := CS) 1234).text
   checkEq "app text is drawn as written" ["┌ok┐"] ((str (cs := CS) (o := .app) t!"┌ok┐").draw 4 1).lines
 

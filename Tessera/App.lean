@@ -76,9 +76,11 @@ namespace App
 variable {cs : Charset} {σ ε : Type}
 
 /-- Draw `init`, then update and draw again for each message from `next`, until `update` asks to
-quit or `next` has no more. Returns the last state. -/
+quit or `next` has no more. Messages already waiting, which `ready` returns without blocking,
+are all taken in before the next frame is drawn, so that a flood of them is drawn once. Returns
+the last state. -/
 partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Incoming ε)))
-    (init : σ) : IO σ := do
+    (init : σ) (ready : IO (Option (Incoming ε)) := pure none) : IO σ := do
   let (w, h) ← screen.size
   let frame := (app.draw init).draw w h
   screen.write (redraw frame ++ titleOutput none (app.title init))
@@ -89,13 +91,24 @@ where
     match new with
     | some t => if shown.map (·.text) == some t.text then "" else Ansi.encode [.title t]
     | none => ""
-  go (s : σ) (w h : Nat) (shown : Buffer cs w h) (title : Option (Text cs .app)) : IO σ := do
-    let some i ← next | return s
+  /-- Update for one message: the new state, the screen's size, and whether to quit. -/
+  step (s : σ) (w h : Nat) (i : Incoming ε) : IO (σ × Nat × Nat × Bool) := do
     let m := i.toMsg
-    let (w', h') := match m with
+    let (w, h) := match m with
       | .resize w' h' => (w', h')
       | _ => (w, h)
     let (s, quit) ← app.update m s
+    return (s, w, h, quit)
+  /-- Update for each message already waiting. -/
+  drain (s : σ) (w h : Nat) : IO (σ × Nat × Nat × Bool) := do
+    let some i ← ready | return (s, w, h, false)
+    let (s, w, h, quit) ← step s w h i
+    if quit then return (s, w, h, true) else drain s w h
+  go (s : σ) (w h : Nat) (shown : Buffer cs w h) (title : Option (Text cs .app)) : IO σ := do
+    let some i ← next | return s
+    let (s, w', h', quit) ← step s w h i
+    if quit then return s
+    let (s, w', h', quit) ← drain s w' h'
     if quit then return s
     let frame := (app.draw s).draw w' h'
     let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame
@@ -135,7 +148,10 @@ def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit :
         send .tick
   try
     start (send ∘ .custom)
-    app.loop screen (do IO.wait (← messages.recv)) init
+    app.loop screen (do IO.wait (← messages.recv)) init messages.tryRecv
+  catch e =>
+    -- Shown after the terminal is restored: filtered, as it may quote text from elsewhere.
+    throw (IO.userError ("\n".intercalate ((Untrusted.lines (cs := cs) (toString e)).1.map (·.text))))
   finally
     stop.set true
     discard <| IO.wait input

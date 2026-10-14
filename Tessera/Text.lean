@@ -191,6 +191,8 @@ structure Policy where
   /-- Lines of a text kept by `lines`. -/
   maxLines : Nat := 20
   tabWidth : Nat := 4
+  /-- Characters of a text read by `lines`; past them, a note of how many more there were. -/
+  maxChars : Nat := 65536
 
 /-- The stand-in for a character refused that is not a control character. -/
 def substitute : Char := '␦'
@@ -356,16 +358,37 @@ def line (s : String) (p : Policy := {}) : Text cs .remote :=
     by simpa using (filterChars_marksOk cs cap (Nat.min_le_right _ _) s.toList false 0 none
       (.inr (.inr ⟨rfl, .inl rfl⟩)))⟩
 
+theorem filterChars_length_le (cs : Charset) (cap : Nat) (base : Bool) (k : Nat) (l : List Char) :
+    (filterChars cs cap base k l).length ≤ l.length := by
+  induction l generalizing base k with
+  | nil => simp [filterChars]
+  | cons c r ih =>
+    simp only [filterChars]
+    split
+    · split
+      · simpa using ih _ _
+      · split
+        · simpa using ih _ _
+        · exact Nat.le_succ_of_le (ih _ _)
+    · split <;> simpa using ih _ _
+
+/-- Filtering never lengthens a text: one character in gives at most one out. -/
+theorem line_length_le (s : String) (p : Policy) : (line (cs := cs) s p).text.length ≤ s.length := by
+  simpa [line, String.length] using filterChars_length_le cs _ false 0 s.toList
+
 /-- Each character of `line s` is one of `s` or a stand-in. -/
 theorem line_sub (s : String) (p : Policy) :
     ∀ c ∈ (line (cs := cs) s p).text.toList, c ∈ s.toList ∨ IsControlPicture c := by
   simpa [line] using filterChars_sub cs _ false 0 s.toList
 
 /-- A text as its lines, filtered: tabs become spaces, a carriage return before a newline goes,
-and of more than `maxLines` lines, the last kept says how many more there were. -/
+of a text longer than `maxChars` only the first are read and a note says how many more there
+were, and of more than `maxLines` lines, the last kept says how many more there were. -/
 def lines (s : String) (p : Policy := {}) :
     {ls : List (Text cs .remote) // ls.length ≤ max 1 p.maxLines} :=
   let tab := String.ofList (List.replicate p.tabWidth ' ')
+  let s := if s.length ≤ p.maxChars then s
+    else (s.take p.maxChars).toString ++ s!" [{s.length - p.maxChars} more characters not shown]"
   let ls := ((s.replace "\r\n" "\n").splitOn "\n").map fun l => line (l.replace "\t" tab) p
   if h : ls.length ≤ p.maxLines then ⟨ls, by omega⟩
   else

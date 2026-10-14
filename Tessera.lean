@@ -13,6 +13,7 @@ import Tessera.Terminal
 import Tessera.Widget
 import Tessera.App
 import Tessera.Consent
+import Tessera.Log
 import Tessera.Text
 import Tessera.Untrusted
 import Tessera.TrustedPath

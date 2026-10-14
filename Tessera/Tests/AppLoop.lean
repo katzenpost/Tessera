@@ -57,5 +57,12 @@ def tests : TestM Unit := do
   let z ← runWith [plus, .terminal (.resize 12 2), plus] 10 1
   check "resize redraws" (z.writes[2]!.startsWith (Ansi.resetStyle ++ Ansi.clearScreen))
   checkEq "drawn at the new size" ["count 2     ", "            "] z.shown
+  let queue ← IO.mkRef [plus, plus, plus]
+  let writes ← IO.mkRef (#[] : Array String)
+  let screen : Screen := { size := pure (10, 1), write := fun s => writes.modify (·.push s) }
+  let take := queue.modifyGet fun | [] => (none, []) | m :: r => (some m, r)
+  let final ← counter.loop screen take 0 take
+  checkEq "messages already waiting are taken in" 3 final
+  checkEq "and drawn once" 2 (← writes.get).size
 
 end Tessera.Tests.AppLoop

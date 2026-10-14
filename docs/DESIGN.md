@@ -273,7 +273,8 @@ inductive Msg (ε : Type)
 - Reads terminal events on one task and timer ticks on another, each arriving as an `Incoming` message.
 - Gives `start` a function that sends the application events of its own from any task, as `Incoming.custom`.
 - Draws the first frame, then updates and draws again for each message. It writes the window's title when the application sets one and when it changes.
-- In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell.
+- Takes in every message already waiting before drawing the next frame, so a flood of messages is drawn once.
+- In a `finally`, restores the terminal state, so a crash or an exception still leaves a usable shell. An exception's text, which may quote text from elsewhere, is filtered with `Untrusted.lines` before it is printed.
 
 `App.loop` turns what arrives into a `Msg`. A key or a paste that arrived as `Incoming.terminal`, which `App.run` makes only from what it reads from the terminal, is the only message that carries a `UserInput`. A paste arrives as a `Pasted`, without bracketed paste's markers.
 
@@ -294,6 +295,17 @@ Anything else leaves the question unanswered, which is the safe answer.
 A **`Url`** carries proofs that it begins with `https://` or `http://` and holds only printable ASCII with no space. `Url.head` shows it begins with `h`, so a program it is passed to cannot take it for an option. `openLink` runs the opener with the link as one argument, through no shell, with the opener's output kept off the screen.
 
 **`Typed.classify`** reads a typed line: a line beginning with `/` is a command, which must be a known one. An unknown command is an error, never a message sent. A paste arrives as `Msg.paste`, apart from typed keys, and is message text whatever it begins with.
+
+## Limits and what is left behind
+
+`Untrusted.Policy` sets how much of a text from elsewhere is read and shown:
+- `maxChars` characters, with a note saying how many more there were;
+- `maxLines` lines;
+- `maxMarks` combining accents on one character.
+
+`line_length_le` shows that filtering never lengthens a text.
+
+A **`Log`** takes only `Text`, so a log that someone later reads with `cat` or `tail -f` holds nothing a terminal would act on. `Log.open` makes its file readable and writable by its owner only, before anything is written to it.
 
 ## Proofs
 
