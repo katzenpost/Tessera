@@ -134,6 +134,12 @@ def pad (left top right bottom : Nat) (w : Widget cs o) : Widget cs o :=
 
 def padAll (n : Nat) (w : Widget cs o) : Widget cs o := pad n n n n w
 
+/-- A widget chosen by the space it is given. -/
+def sized (f : Context → Widget cs o) (hPolicy vPolicy : Policy := .greedy) : Widget cs o where
+  hPolicy
+  vPolicy
+  render ctx := (f ctx).render ctx
+
 /-- At most `n` cells wide. -/
 def hLimit (n : Nat) (w : Widget cs o) : Widget cs o :=
   { w with

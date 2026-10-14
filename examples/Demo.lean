@@ -13,57 +13,52 @@ list; Esc or Ctrl+C quits. -/
 
 open Tessera Widget Untrusted
 
-abbrev W := Widget Charset.standard .remote
+abbrev CS := Charset.standard
+
+abbrev W := Widget CS .remote
 
 structure State where
-  items : Array String
-  selected : Nat := 0
-  input : String := ""
+  items : ListView (Text CS .remote)
+  input : Input CS := {}
+  /-- Rows of the list on screen, for paging: the screen's height less the frame around it. -/
+  rows : Nat := 10
   beats : Nat := 0
-
-/-- The items, the selected one highlighted, scrolled to keep it in view. -/
-def list (items : Array String) (selected : Nat) : W :=
-  Widget.custom (hPolicy := .greedy) (vPolicy := .greedy) fun ctx =>
-    let offset := selected + 1 - min (selected + 1) ctx.height
-    let row (i : Nat) (s : String) : W :=
-      if i == selected then withStyle { reverse := true } (hBox [str (line s), fill]) else str (line s)
-    (viewport offset (vBox (items.toList.zipIdx.map fun (s, i) => row i s))).render ctx
 
 def draw (s : State) : W :=
   vBox [
     hBox [
-      hLimit 28 (borderWithLabel t!" Items " (list s.items s.selected)),
+      hLimit 28 (borderWithLabel t!" Items " (s.items.view str)),
       borderWithLabel t!" Tessera " (vBox [padAll 1 (txt
         t!"Up and Down move through the list. Type, then press Enter to add a line to it. Esc quits."),
         fill])],
     vLimit 3 (borderWithLabel t!" New item " (hBox [
-      withStyle (Style.fgOf .cyan) (str t!"> "), str (line s.input),
-      withStyle { reverse := true } (str t!" "), fill])),
+      withStyle (Style.fgOf .cyan) (str t!"> "), s.input.view])),
     withStyle { dim := true } (str (t!" heartbeats from a background task: " ++ .ofNat s.beats))]
 
-def update : Msg Unit → State → IO (State × Bool)
-  | .key .esc _ _, s => pure (s, true)
-  | .key (.char 'c') { ctrl := true, .. } _, s => pure (s, true)
-  | .key .up _ _, s => pure ({ s with selected := s.selected - 1 }, false)
-  | .key .down _ _, s => pure ({ s with selected := min (s.selected + 1) (s.items.size - 1) }, false)
-  | .key .backspace _ _, s => pure ({ s with input := s.input.dropEnd 1 |>.toString }, false)
-  | .key .enter _ _, s =>
-    if s.input.isEmpty then pure (s, false)
-    else pure ({ s with items := s.items.push s.input, input := "", selected := s.items.size }, false)
-  | .key (.char c) m _, s =>
-    if m.ctrl || m.alt then pure (s, false) else pure ({ s with input := s.input.push c }, false)
-  | .paste p _, s => pure ({ s with input := s.input ++ p.text }, false)
-  | .custom (), s => pure ({ s with beats := s.beats + 1 }, false)
-  | _, s => pure (s, false)
+def update (m : Msg Unit) (s : State) : IO (State × Bool) :=
+  match m with
+  | .key .esc _ _ => pure (s, true)
+  | .key (.char 'c') { ctrl := true, .. } _ => pure (s, true)
+  | .key .up _ _ | .key .down _ _ | .key .pageUp _ _ | .key .pageDown _ _ =>
+    pure ({ s with items := s.items.update m s.rows }, false)
+  | .resize _ h => pure ({ s with rows := h - 6 }, false)
+  | .custom () => pure ({ s with beats := s.beats + 1 }, false)
+  | m =>
+    let (input, sent) := s.input.update m
+    let items := match sent with
+      | some t => let l := s.items.push t; l.select (l.items.size - 1) s.rows
+      | none => s.items
+    pure ({ s with input, items }, false)
 
 def main : IO Unit := do
   let stop ← IO.mkRef false
   let items := #["apples", "bread", "cheese", "dates", "eggs", "figs", "grapes", "honey",
-    "ice cream", "jam", "kale", "lemons", "mangoes", "nuts", "olives", "pears"]
-  let final ← App.run { draw, update } { items } fun post => do
+    "ice cream", "jam", "kale", "lemons", "mangoes", "nuts", "olives", "pears"].map (Untrusted.line ·)
+  let rows := (← CrosstermFfi.size).2.toNat - 6
+  let final ← App.run { draw, update } { items := { items }, rows } fun post => do
     discard <| IO.asTask (prio := .dedicated) do
       while !(← stop.get) do
         IO.sleep 1000
         post ()
   stop.set true
-  IO.println s!"{final.items.size} items, {final.beats} heartbeats"
+  IO.println s!"{final.items.items.size} items, {final.beats} heartbeats"

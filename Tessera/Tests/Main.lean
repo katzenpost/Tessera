@@ -11,6 +11,7 @@ import Tessera.Tests.Axioms
 import Tessera.Tests.Rejects
 import Tessera.Tests.TrustedPath
 import Tessera.Tests.Consent
+import Tessera.Tests.Interactive
 
 open Tessera.Tests
 
@@ -23,5 +24,6 @@ def main : IO UInt32 := do
     ("app", AppLoop.tests),
     ("untrusted", Untrusted.tests),
     ("trusted path", TrustedPath.tests),
-    ("consent", Consent.tests)].mapM fun (n, t) => runSuite n t
+    ("consent", Consent.tests),
+    ("interactive", Interactive.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1
