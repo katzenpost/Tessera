@@ -215,30 +215,37 @@ inductive Op (cs : Charset)
   | moveTo (x y : Nat)
   | sgr (s : Style)
   | clear
-  | reset
   | print (g : Glyph cs)
-  | setTitle (t : Text cs .app)
-  | copy (t : Text cs .app) (d : Designation t)
 ```
 
-Everything Tessera writes to the terminal is an `Op`, and `Op.encode` gives its bytes:
+Everything Tessera writes to the terminal is an `Op`, and `Ansi.encode` gives the characters of a list of them:
 - Text reaches the terminal only through `print`, which takes a glyph.
-- The only operations that place text inside an escape sequence are `setTitle` and `copy`, and both take text the program wrote.
+- No operation places text inside an escape sequence.
 - No operation asks the terminal a question, so none can make the terminal type a reply into the program.
 
-`diff old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. A two-cell glyph is written again when either of its halves changed. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. When the screen changes size, `redraw new` clears it and draws the whole frame.
+Setting the window title and writing the clipboard are operations of the same kind. Each takes text the program wrote, and copying also takes a `Designation` (see Consent).
+
+`diffOps old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. A two-cell glyph is written again when either of its halves changed. When the screen changes size, `redrawOps new` clears it and draws the whole frame. `diff` and `redraw` are their encodings, and they are all `App.run` writes.
 
 ### The VT model
 
-`VT.tokens` splits a stream of characters into what a terminal makes of it, following ECMA-48:
+`VT.tokens` is a terminal's parser: a state machine after ECMA-48 and the DEC parser that terminals follow. It turns characters into `Token`s:
 - printed characters;
-- CSI, OSC, DCS and other escape sequences;
-- C0 and C1 controls.
+- C0, DEL and C1 controls;
+- control sequences;
+- operating system commands;
+- control strings (DCS, SOS, PM, APC);
+- other escape sequences.
 
-`VT.apply` runs the printing and cursor tokens on a model screen. Three theorems state Tessera's guarantees against this model:
-- **`text_tokens_print`:** the characters of any `Text` split into printed characters only. It assumes nothing about the terminal.
-- **`output_only_own`:** encoding a list of operations and splitting the result gives back exactly those operations, each as a printed character or one of Tessera's own sequences.
-- **`diff_correct`:** for any `em : Emulator cs`, applying `diff old new` to a screen showing `old` leaves it showing `new`. The cursor ends every run where Tessera computed, so text cannot drift into the cell beside it.
+It takes every introducer a terminal might honour: ESC, and the C1 controls that begin a sequence on their own. A character that is none of these, `Inert`, is printed in the ground state and leaves the parser there. The tests read Tessera's output with the same parser, through a model terminal that carries out the printing and the control sequences.
+
+Four theorems state Tessera's guarantees against this model:
+- **`text_tokens_print`:** the characters of any `Text`, in any charset, are read as printed characters and nothing else. It follows from the `Charset` laws, through `inert_of_text`, and assumes nothing about any particular terminal.
+- **`run_csi`:** a control sequence of parameter bytes and a final byte is read as one token, and leaves the parser in its ground state.
+- **`output_only_own`:** reading the encoding of a list of operations gives back exactly those operations' tokens, in order.
+- **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is a printed character that only prints, or one of Tessera's control sequences, which move the cursor (`H`), set the style (`m`) or clear the screen (`J`).
+
+The width guarantee is stated against an `Emulator`. **`diff_correct`:** for any `em : Emulator cs`, applying `diffOps old new` to a screen showing `old` leaves it showing `new`. The cursor ends every run where Tessera computed, so text cannot drift into the cell beside it.
 
 ## Applications
 

@@ -29,6 +29,9 @@ instance : DecidableEq (Glyph cs) := fun a b =>
 
 namespace Glyph
 
+/-- A space, which every charset allows. -/
+def space : Glyph cs := ⟨' ', cs.printable_of_ascii (by decide) (by decide)⟩
+
 def ofChar? (c : Char) : Option (Glyph cs) := if h : cs.Printable c then some ⟨c, h⟩ else none
 
 def width (g : Glyph cs) : Nat := cs.width g.char

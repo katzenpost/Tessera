@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import Tessera.Diff
 import Tessera.Untrusted
+import Tessera.VT
 import Tessera.Widget
 import Tessera.Tests.Util
 
@@ -114,6 +115,19 @@ def tests : TestM Unit := do
     check s!"{what}: the output writes nothing but its own CSI" (onlyCsi (redraw b))
     check s!"{what}: nothing that steers is passed on"
       (!(withoutControls payload).1.any steers)
+  check "the model reads OSC 52"
+    ([VT.Token.osc "52;c;ZXZpbA==".toList] == VT.tokens "\x1b]52;c;ZXZpbA==\x07".toList)
+  check "the model reads a one-byte CSI"
+    ([VT.Token.csi "31".toList [] 'm', .print 'r'] == VT.tokens "\u009b31mr".toList)
+  check "the model reads tmux passthrough as a control string"
+    ([VT.Token.str 'P' "tmux;".toList] == (VT.tokens "\x1bPtmux;\x1b\\".toList).take 1)
+  for (what, payload) in corpus do
+    let steersTerminal := payload.any fun c => c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat < 0xA0)
+    if steersTerminal then
+      check s!"{what}: the model sees more than printing in the payload"
+        ((VT.tokens payload.toList).any (!·.isPrint))
+    check s!"{what}: the model sees only printing once filtered"
+      ((VT.tokens (line (cs := CS) payload).text.toList).all (·.isPrint))
   checkEq "controls show as Control Pictures" "␛]0;x␇" (line (cs := CS) "\x1b]0;x\x07").text
   checkEq "a newline in one line shows" "a␊b" (line (cs := CS) "a\nb").text
   checkEq "lines are capped" 20 (lines (cs := CS) (String.intercalate "\n" (List.replicate 30 "x"))).1.length

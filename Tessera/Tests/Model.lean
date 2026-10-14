@@ -4,11 +4,13 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Tessera.Buffer
+import Tessera.VT
 import Tessera.Tests.Util
 
 /-! # A model terminal
 
-Interprets the escape sequences Tessera writes, to check what a terminal would show. -/
+Reads output with `VT.tokens`, as the theorems about Tessera's output do, and carries out the
+control sequences Tessera writes, to check what a terminal would show. -/
 
 namespace Tessera.Tests
 
@@ -64,18 +66,13 @@ def putChar (t : Terminal w h) (c : Char) : Terminal w h :=
   let (screen, x) := t.screen.putString t.x t.y (CS.glyphs (String.singleton c)) t.style
   { t with screen, x := x.val }
 
+def apply (t : Terminal w h) : VT.Token → Terminal w h
+  | .print c => t.putChar c
+  | .csi ps _ f => t.control (String.ofList ps) f
+  | _ => t
+
 /-- Run `out` on the terminal. -/
-partial def run (t : Terminal w h) (out : String) : Terminal w h :=
-  go t out.toList
-where
-  go (t : Terminal w h) : List Char → Terminal w h
-    | '\x1b' :: '[' :: rest =>
-      let p := rest.takeWhile fun c => c.isDigit || c == ';'
-      match rest.drop p.length with
-      | f :: rest' => go (t.control (String.ofList p) f) rest'
-      | [] => t
-    | c :: rest => go (t.putChar c) rest
-    | [] => t
+def run (t : Terminal w h) (out : String) : Terminal w h := (VT.tokens out.toList).foldl apply t
 
 end Terminal
 

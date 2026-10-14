@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 import Tessera.Style
 import Tessera.Char
 import Tessera.Buffer
+import Tessera.VT
 import Tessera.Ansi
 import Tessera.Diff
 import Tessera.Widget
