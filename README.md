@@ -61,7 +61,18 @@ Building needs `cargo` on the `PATH`, for crossterm.
 
 ## Tests
 
-    lake exe tessera-test
+    make ci
+
+builds everything, checks that no proof uses `sorry` or an axiom beyond Lean's own and that the
+programs that must not compile do not, and runs the test suites. `make help` lists the rest.
+
+## Benchmarks
+
+    make bench
+
+times filtering untrusted text, and laying out, diffing and redrawing a chat window, with
+[LeanBench](https://github.com/alok/LeanBench). `make bench-text` and `make bench-draw` run one
+suite each.
 
 ## License
 

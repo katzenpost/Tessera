@@ -10,6 +10,11 @@ name = "crossterm-lean-ffi"
 git = "https://github.com/katzenpost/crossterm-lean-ffi"
 rev = "993b77125452a49fa2d56cef21c8a95e4f65ab17"
 
+[[require]]
+name = "LeanBench"
+git = "https://github.com/alok/LeanBench"
+rev = "250d2a892bf8c91ec3ae5de8517793e18379f97b"
+
 [[lean_lib]]
 name = "Tessera"
 
@@ -25,3 +30,7 @@ root = "Tessera.Tests.Main"
 name = "tessera-demo"
 root = "Demo"
 srcDir = "examples"
+
+[[lean_exe]]
+name = "tessera-bench"
+root = "Tessera.Bench.Main"
