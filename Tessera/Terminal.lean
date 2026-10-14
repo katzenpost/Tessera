@@ -457,8 +457,7 @@ theorem drawRow_correct (y : Nat) (hy : y < h) (all : Bool) (R O N : List (Cell 
 /-- The rows `drawRows` has drawn after the first `k`. -/
 def rowsDrawn (old new : Buffer cs w h) (all : Bool) (start : DiffState cs) (k : Nat) :
     DiffState cs :=
-  (List.range k).foldl (init := start) fun s y =>
-    drawRow y all 0 (new.rows[y]?.map (·.cells) |>.getD []) (old.rows[y]?.map (·.cells) |>.getD []) s
+  (List.range k).foldl (init := start) (drawRowOf old new all)
 
 theorem rowsDrawn_correct (old new : Buffer cs w h) (all : Bool) (start : DiffState cs)
     (hsim : Sim start (model em t0 start)) (hO : all = false → old = (model em t0 start).screen) :
@@ -473,13 +472,26 @@ theorem rowsDrawn_correct (old new : Buffer cs w h) (all : Bool) (start : DiffSt
     intro hk
     obtain ⟨hsim', hrows⟩ := ih (by omega)
     have hkh : k < h := by omega
-    have hstep : rowsDrawn old new all start (k + 1) =
-        drawRow k all 0 new.rows[k].cells old.rows[k].cells (rowsDrawn old new all start k) := by
-      simp [rowsDrawn, List.range_succ, List.foldl_append, hkh]
-    rw [hstep]
     have hRk : (model em t0 (rowsDrawn old new all start k)).screen.rows[k] =
         (model em t0 start).screen.rows[k] := by
       rw [hrows k hkh]; simp
+    by_cases hskip : all = false ∧ Cell.listBeq new.rows[k].cells old.rows[k].cells
+    · have hstep : rowsDrawn old new all start (k + 1) = rowsDrawn old new all start k := by
+        simp [rowsDrawn, List.range_succ, List.foldl_append, drawRowOf, hkh, hskip]
+      rw [hstep]
+      refine ⟨hsim', fun y hy => ?_⟩
+      by_cases hyk : y = k
+      · subst hyk
+        rw [hRk, ← hO hskip.1]
+        simp [Row.ext' (Cell.listBeq_iff.mp hskip.2)]
+      · rw [hrows y hy]
+        by_cases hlt : y < k
+        · simp [hlt, show y < k + 1 by omega]
+        · simp [hlt, show ¬ y < k + 1 by omega]
+    have hstep : rowsDrawn old new all start (k + 1) =
+        drawRow k all 0 new.rows[k].cells old.rows[k].cells (rowsDrawn old new all start k) := by
+      simp [rowsDrawn, List.range_succ, List.foldl_append, drawRowOf, hkh, hskip]
+    rw [hstep]
     obtain ⟨h1, h2, h3⟩ := drawRow_correct em t0 k hkh all
       (model em t0 start).screen.rows[k].cells old.rows[k].cells new.rows[k].cells
       (model em t0 start).screen.rows[k].wf (model em t0 start).screen.rows[k].length_eq

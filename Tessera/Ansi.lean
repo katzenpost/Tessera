@@ -262,7 +262,7 @@ theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
   | image g px =>
     cases g with
     | sixel =>
-      simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc, List.singleton_append]
+      simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
       have := run_str (i := 'P') (.inl rfl) (plain_cons (c := 'q') (by decide) (plain (Sixel.body px)).2) rest
       simpa using this
     | kitty =>

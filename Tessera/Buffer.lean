@@ -52,7 +52,34 @@ inductive Cell (cs : Charset) where
   /-- The right half of a two-cell glyph, drawn in the glyph's style. -/
   | wideRight
   | blank (style : Style)
-  deriving DecidableEq
+
+/-- Whether two cells are the same, written out so that comparing frames is quick. -/
+def Cell.beq : Cell cs → Cell cs → Bool
+  | .glyph g s, .glyph g' s' => g.char == g'.char && s.beq s'
+  | .blank s, .blank s' => s.beq s'
+  | .wideRight, .wideRight => true
+  | _, _ => false
+
+theorem Cell.beq_iff {a b : Cell cs} : a.beq b = true ↔ a = b := by
+  cases a <;> cases b <;> simp [Cell.beq, Style.beq_iff]
+  case glyph.glyph g s g' s' =>
+    intro _
+    constructor
+    · intro h; cases g; cases g'; simp_all
+    · rintro rfl; rfl
+
+instance : DecidableEq (Cell cs) := fun _ _ => decidable_of_iff _ Cell.beq_iff
+
+/-- Whether two lists of cells are the same, a cell at a time. -/
+def Cell.listBeq : List (Cell cs) → List (Cell cs) → Bool
+  | a :: as, b :: bs => a.beq b && listBeq as bs
+  | [], [] => true
+  | _, _ => false
+
+theorem Cell.listBeq_iff {a b : List (Cell cs)} : listBeq a b = true ↔ a = b := by
+  induction a generalizing b with
+  | nil => cases b <;> simp [listBeq]
+  | cons x xs ih => cases b <;> simp [listBeq, beq_iff, ih]
 
 instance : Inhabited (Cell cs) := ⟨.blank {}⟩
 
