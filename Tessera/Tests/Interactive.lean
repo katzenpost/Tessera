@@ -118,6 +118,9 @@ def tests : TestM Unit := do
   check "and in reverse video to the edge"
     (((({ items := #["claude-demo", "work"] } : ListView String).view fun s =>
       if s == "claude-demo" then wide else str (Untrusted.line s)).draw 14 2).get 13 0).style.reverse
+  check "a list takes all the height it is given, as it asks to"
+    (((({ items := #["a"] } : ListView String).view (cs := CS) (o := .remote) fun s => str (Untrusted.line s)).render
+      { width := 3, height := 4 }).h == 4)
   checkEq "a row taller than a line takes one" ["a", "b", " "]
     (drawn (({ items := #["a", "b"] } : ListView String).view fun s => vBox [str (Untrusted.line s), fill]) 1 3)
   checkEq "fitWidths" [3, 1] (fitWidths 5 [3, 5])
