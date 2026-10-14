@@ -4,147 +4,333 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Tessera.Style
+import Tessera.Char
 
 /-! # Screen buffers
 
-A buffer is a grid of cells. A double-width character, such as a CJK ideograph or an emoji, fills
-its own cell and the one to its right, which holds `Cell.continuation`. -/
+A buffer is a grid of cells, `w` wide and `h` high. A cell holds a glyph, which is a character
+its charset allows, the right half of a two-cell glyph, or nothing. Each row carries the proof
+that it is well formed: every two-cell glyph is followed by its right half, and a right half
+follows nothing else. Every write preserves it, blanking whatever half of a two-cell glyph it
+leaves behind. -/
 
 namespace Tessera
 
-/-- Characters that take no cell: controls, which a terminal would act on rather than draw;
-format characters, which reorder or hide text (bidi controls, zero-width spaces and joiners, word
-joiners, the byte order mark, tag characters) or pick a glyph's presentation (variation
-selectors); and combining marks, which a terminal draws over the character before them. None of
-them is ever drawn. -/
-def zeroWidth (n : Nat) : Bool :=
-  n < 0x20 || (0x7F ≤ n && n < 0xA0) || n == 0xAD ||
-  [(0x300, 0x36F), (0x483, 0x489), (0x591, 0x5BD), (0x5BF, 0x5BF), (0x5C1, 0x5C2),
-   (0x5C4, 0x5C5), (0x5C7, 0x5C7), (0x600, 0x605), (0x610, 0x61A), (0x61C, 0x61C),
-   (0x64B, 0x65F), (0x670, 0x670), (0x6D6, 0x6DD), (0x6DF, 0x6E4), (0x6E7, 0x6E8),
-   (0x6EA, 0x6ED), (0x70F, 0x70F), (0x711, 0x711), (0x730, 0x74A), (0x900, 0x902),
-   (0x93A, 0x93A), (0x93C, 0x93C), (0x941, 0x948), (0x94D, 0x94D), (0x951, 0x957),
-   (0x962, 0x963), (0xE31, 0xE31), (0xE34, 0xE3A), (0xE47, 0xE4E), (0x1160, 0x11FF),
-   (0x180B, 0x180F), (0x1AB0, 0x1AFF), (0x1DC0, 0x1DFF), (0x200B, 0x200F), (0x2028, 0x202E),
-   (0x2060, 0x206F), (0x20D0, 0x20FF), (0xFE00, 0xFE0F), (0xFE20, 0xFE2F), (0xFEFF, 0xFEFF),
-   (0xFFF9, 0xFFFB), (0x1D167, 0x1D169), (0x1D173, 0x1D182), (0xE0000, 0xE0FFF)].any
-    fun (lo, hi) => lo ≤ n && n ≤ hi
+variable {cs : Charset}
 
-/-- Characters two cells wide: Unicode's East Asian Wide and Fullwidth ones, as terminals take
-them from `wcwidth`, CJK and the emoji drawn as pictures among them. -/
-def doubleWidth (n : Nat) : Bool :=
-  [(0x1100, 0x115F), (0x231A, 0x231B), (0x2329, 0x232A), (0x23E9, 0x23EC), (0x23F0, 0x23F0),
-   (0x23F3, 0x23F3), (0x25FD, 0x25FE), (0x2614, 0x2615), (0x2648, 0x2653), (0x267F, 0x267F),
-   (0x2693, 0x2693), (0x26A1, 0x26A1), (0x26AA, 0x26AB), (0x26BD, 0x26BE), (0x26C4, 0x26C5),
-   (0x26CE, 0x26CE), (0x26D4, 0x26D4), (0x26EA, 0x26EA), (0x26F2, 0x26F3), (0x26F5, 0x26F5),
-   (0x26FA, 0x26FA), (0x26FD, 0x26FD), (0x2705, 0x2705), (0x270A, 0x270B), (0x2728, 0x2728),
-   (0x274C, 0x274C), (0x274E, 0x274E), (0x2753, 0x2755), (0x2757, 0x2757), (0x2795, 0x2797),
-   (0x27B0, 0x27B0), (0x27BF, 0x27BF), (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55),
-   (0x2E80, 0x303E), (0x3041, 0x33FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xA000, 0xA4CF),
-   (0xA960, 0xA97F), (0xAC00, 0xD7A3), (0xF900, 0xFAFF), (0xFE10, 0xFE19), (0xFE30, 0xFE6F),
-   (0xFF00, 0xFF60), (0xFFE0, 0xFFE6), (0x16FE0, 0x16FE4), (0x17000, 0x18CFF),
-   (0x1B000, 0x1B2FF), (0x1F004, 0x1F004), (0x1F0CF, 0x1F0CF), (0x1F18E, 0x1F18E),
-   (0x1F191, 0x1F19A), (0x1F200, 0x1F202), (0x1F210, 0x1F23B), (0x1F240, 0x1F248),
-   (0x1F250, 0x1F251), (0x1F260, 0x1F265), (0x1F300, 0x1F320), (0x1F32D, 0x1F335),
-   (0x1F337, 0x1F37C), (0x1F37E, 0x1F393), (0x1F3A0, 0x1F3CA), (0x1F3CF, 0x1F3D3),
-   (0x1F3E0, 0x1F3F0), (0x1F3F4, 0x1F3F4), (0x1F3F8, 0x1F43E), (0x1F440, 0x1F440),
-   (0x1F442, 0x1F4FC), (0x1F4FF, 0x1F53D), (0x1F54B, 0x1F54E), (0x1F550, 0x1F567),
-   (0x1F57A, 0x1F57A), (0x1F595, 0x1F596), (0x1F5A4, 0x1F5A4), (0x1F5FB, 0x1F64F),
-   (0x1F680, 0x1F6C5), (0x1F6CC, 0x1F6CC), (0x1F6D0, 0x1F6D2), (0x1F6D5, 0x1F6D7),
-   (0x1F6DC, 0x1F6DF), (0x1F6EB, 0x1F6EC), (0x1F6F4, 0x1F6FC), (0x1F7E0, 0x1F7EB),
-   (0x1F7F0, 0x1F7F0), (0x1F90C, 0x1F93A), (0x1F93C, 0x1F945), (0x1F947, 0x1F9FF),
-   (0x1FA70, 0x1FA7C), (0x1FA80, 0x1FA89), (0x1FA8F, 0x1FAC6), (0x1FACE, 0x1FADC),
-   (0x1FADF, 0x1FAE9), (0x1FAF0, 0x1FAF8), (0x20000, 0x2FFFD), (0x30000, 0x3FFFD)].any
-    fun (lo, hi) => lo ≤ n && n ≤ hi
+/-- A character that may be written to the terminal as it is. -/
+structure Glyph (cs : Charset) where
+  char : Char
+  printable : cs.Printable char
 
-/-- How many cells `c` takes: 0 for the characters `zeroWidth` names, which are not drawn; 2 for
-double-width characters; 1 for the rest. East Asian ambiguous-width characters take one cell, as
-terminals outside CJK locales draw them. -/
-def charWidth (c : Char) : Nat :=
-  let n := c.toNat
-  if zeroWidth n then 0 else if doubleWidth n then 2 else 1
+instance : DecidableEq (Glyph cs) := fun a b =>
+  if h : a.char = b.char then isTrue (by cases a; cases b; simp_all)
+  else isFalse fun e => h (congrArg Glyph.char e)
 
-/-- How many cells `s` takes. -/
-def stringWidth (s : String) : Nat :=
-  s.foldl (fun n c => n + charWidth c) 0
+namespace Glyph
 
-structure Cell where
-  char : Char := ' '
-  style : Style := {}
-  deriving DecidableEq, Repr, Inhabited
+/-- A space, which every charset allows. -/
+def space : Glyph cs := ⟨' ', cs.printable_of_ascii (by decide) (by decide)⟩
+
+def ofChar? (c : Char) : Option (Glyph cs) := if h : cs.Printable c then some ⟨c, h⟩ else none
+
+def width (g : Glyph cs) : Nat := cs.width g.char
+
+def wide (g : Glyph cs) : Bool := cs.width g.char == 2
+
+end Glyph
+
+/-- The characters of `s` that `cs` allows; the rest take no cell and are left out. -/
+def Charset.glyphs (cs : Charset) (s : String) : List (Glyph cs) := s.toList.filterMap Glyph.ofChar?
+
+/-- How many cells `s` takes, leaving out the characters `cs` does not allow. -/
+def Charset.textWidth (cs : Charset) (s : String) : Nat :=
+  s.foldl (fun n c => n + if cs.Printable c then cs.width c else 0) 0
+
+inductive Cell (cs : Charset) where
+  | glyph (g : Glyph cs) (style : Style)
+  /-- The right half of a two-cell glyph, drawn in the glyph's style. -/
+  | wideRight
+  | blank (style : Style)
+  deriving DecidableEq
+
+instance : Inhabited (Cell cs) := ⟨.blank {}⟩
 
 namespace Cell
 
-/-- The right half of a double-width character. -/
-def continuation (style : Style := {}) : Cell := { char := '\x00', style }
+def style : Cell cs → Style
+  | .glyph _ s | .blank s => s
+  | .wideRight => {}
 
-def isContinuation (c : Cell) : Bool := c.char == '\x00'
+/-- The character shown: a right half shows as nothing, and is not a character of its own. -/
+def char : Cell cs → Char
+  | .glyph g _ => g.char
+  | _ => ' '
+
+def isContinuation : Cell cs → Bool
+  | .wideRight => true
+  | _ => false
+
+/-- A glyph drawn in one cell: not two cells wide, and not a space, which is a blank. -/
+def Narrow (g : Glyph cs) : Bool := !g.wide && g.char != ' '
+
+/-- Every two-cell glyph is followed by its right half, a right half follows nothing else, and a
+space is a blank, so that one row shows one way. -/
+def wellFormed : List (Cell cs) → Bool
+  | [] => true
+  | .wideRight :: _ => false
+  | .blank _ :: rest => wellFormed rest
+  | .glyph g _ :: .wideRight :: rest => g.wide && wellFormed rest
+  | .glyph g _ :: rest => Narrow g && wellFormed rest
+
+theorem wellFormed_cons_blank {s : Style} {l : List (Cell cs)} (h : wellFormed l) :
+    wellFormed (.blank s :: l) := by
+  simpa [wellFormed] using h
+
+theorem wellFormed_cons_narrow {g : Glyph cs} {s : Style} {l : List (Cell cs)} (hg : Narrow g)
+    (h : wellFormed l) : wellFormed (.glyph g s :: l) := by
+  match l with
+  | [] => simp [wellFormed, hg]
+  | .wideRight :: _ => simp [wellFormed] at h
+  | .blank _ :: _ => simpa [wellFormed, hg] using h
+  | .glyph _ _ :: _ => simpa [wellFormed, hg] using h
+
+theorem wellFormed_cons_wide {g : Glyph cs} {s : Style} {l : List (Cell cs)} (hg : g.wide = true)
+    (h : wellFormed l) : wellFormed (.glyph g s :: .wideRight :: l) := by
+  simpa [wellFormed, hg] using h
+
+theorem wellFormed_append {a b : List (Cell cs)} (ha : wellFormed a) (hb : wellFormed b) :
+    wellFormed (a ++ b) := by
+  induction a using wellFormed.induct with
+  | case1 => simpa using hb
+  | case2 => simp [wellFormed] at ha
+  | case3 _ _ ih => exact wellFormed_cons_blank (ih (by simpa [wellFormed] using ha))
+  | case4 g _ _ ih =>
+    simp only [wellFormed, Bool.and_eq_true] at ha
+    exact wellFormed_cons_wide ha.1 (ih ha.2)
+  | case5 g _ rest hrest ih =>
+    have ha' : Narrow g ∧ wellFormed rest := by
+      match rest, hrest with
+      | [], _ => simpa [wellFormed] using ha
+      | .blank _ :: _, _ => simpa [wellFormed] using ha
+      | .glyph _ _ :: _, _ => simpa [wellFormed] using ha
+      | .wideRight :: _, h => exact absurd rfl (h _)
+    exact wellFormed_cons_narrow ha'.1 (ih ha'.2)
+
+theorem wellFormed_replicate_blank (n : Nat) (s : Style) :
+    wellFormed (List.replicate n (Cell.blank (cs := cs) s)) := by
+  induction n with
+  | zero => rfl
+  | succ n ih => exact wellFormed_cons_blank ih
+
+/-- The cells of `gs` in style `s`, each two-cell glyph followed by its right half. A space is a
+blank, so that a space shows one way however it was drawn. -/
+def ofGlyphs (s : Style) : List (Glyph cs) → List (Cell cs)
+  | [] => []
+  | g :: gs =>
+    if g.char = ' ' then .blank s :: ofGlyphs s gs
+    else if g.wide then .glyph g s :: .wideRight :: ofGlyphs s gs
+    else .glyph g s :: ofGlyphs s gs
+
+theorem wellFormed_ofGlyphs (s : Style) (gs : List (Glyph cs)) : wellFormed (ofGlyphs s gs) := by
+  induction gs with
+  | nil => rfl
+  | cons g gs ih =>
+    unfold ofGlyphs
+    split
+    · exact wellFormed_cons_blank ih
+    · rename_i hsp
+      cases hg : g.wide
+      · simpa [hg] using wellFormed_cons_narrow (by simp [Narrow, hg, hsp]) ih
+      · simpa [hg] using wellFormed_cons_wide hg ih
+
+/-- The first `n` cells; a two-cell glyph cut in half becomes a blank. -/
+def cut : Nat → List (Cell cs) → List (Cell cs)
+  | 0, _ => []
+  | _, [] => []
+  | n + 1, .glyph g s :: .wideRight :: rest =>
+    if n = 0 then [.blank s] else .glyph g s :: .wideRight :: cut (n - 1) rest
+  | n + 1, c :: rest => c :: cut n rest
+
+/-- All but the first `n` cells; the right half of a two-cell glyph cut in half becomes a
+blank. -/
+def skip : Nat → List (Cell cs) → List (Cell cs)
+  | 0, l => l
+  | _, [] => []
+  | n + 1, .glyph _ s :: .wideRight :: rest => if n = 0 then .blank s :: rest else skip (n - 1) rest
+  | n + 1, _ :: rest => skip n rest
+
+@[simp] theorem cut_nil (n : Nat) : cut n ([] : List (Cell cs)) = [] := by
+  cases n <;> simp [cut]
+
+@[simp] theorem skip_nil (n : Nat) : skip n ([] : List (Cell cs)) = [] := by
+  cases n <;> simp [skip]
+
+theorem length_cut (n : Nat) (l : List (Cell cs)) : (cut n l).length = min n l.length := by
+  induction n, l using cut.induct with
+  | case1 => simp [cut]
+  | case2 x hx => simp [cut.eq_2 x hx]
+  | case3 => simp [cut]
+  | case4 n g s rest hn ih => simp [cut, hn, ih]; omega
+  | case5 n c rest hp ih => rw [cut.eq_4 _ _ _ hp]; simp [ih]
+
+theorem length_skip (n : Nat) (l : List (Cell cs)) : (skip n l).length = l.length - n := by
+  induction n, l using skip.induct with
+  | case1 => simp [skip]
+  | case2 x hx => simp [skip.eq_2 x hx]
+  | case3 => simp [skip]
+  | case4 n g s rest hn ih => simp [skip, hn, ih]; omega
+  | case5 n c rest hp ih => rw [skip.eq_4 _ _ _ hp]; simp [ih]
+
+theorem wellFormed_cut (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : wellFormed (cut n l) := by
+  induction n, l using cut.induct with
+  | case1 => simp [cut, wellFormed]
+  | case2 x hx => rw [cut.eq_2 x hx]; rfl
+  | case3 => simp [cut, wellFormed]
+  | case4 n g s rest hn ih =>
+    simp only [wellFormed, Bool.and_eq_true] at h
+    simpa [cut, hn] using wellFormed_cons_wide h.1 (ih h.2)
+  | case5 n c rest hpair ih =>
+    rw [cut.eq_4 _ _ _ hpair]
+    match c, rest, hpair with
+    | .blank _, rest, _ => exact wellFormed_cons_blank (ih (by simpa [wellFormed] using h))
+    | .wideRight, _, _ => simp [wellFormed] at h
+    | .glyph g s, [], _ => simpa [cut] using h
+    | .glyph g s, .wideRight :: _, hp => exact (hp g s _ rfl rfl).elim
+    | .glyph g s, .blank _ :: _, _ =>
+      simp only [wellFormed, Bool.and_eq_true] at h
+      exact wellFormed_cons_narrow h.1 (ih (by simpa [wellFormed] using h.2))
+    | .glyph g s, .glyph _ _ :: _, _ =>
+      simp only [wellFormed, Bool.and_eq_true] at h
+      exact wellFormed_cons_narrow h.1 (ih (by simpa [wellFormed] using h.2))
+
+theorem wellFormed_skip (n : Nat) {l : List (Cell cs)} (h : wellFormed l) : wellFormed (skip n l) := by
+  induction n, l using skip.induct with
+  | case1 => simpa [skip] using h
+  | case2 x hx => rw [skip.eq_2 x hx]; rfl
+  | case3 =>
+    simp only [wellFormed, Bool.and_eq_true] at h
+    simpa [skip] using wellFormed_cons_blank h.2
+  | case4 n g s rest hn ih =>
+    simp only [wellFormed, Bool.and_eq_true] at h
+    simpa [skip, hn] using ih h.2
+  | case5 n c rest hpair ih =>
+    rw [skip.eq_4 _ _ _ hpair]
+    match c, rest, hpair with
+    | .blank _, rest, _ => exact ih (by simpa [wellFormed] using h)
+    | .wideRight, _, _ => simp [wellFormed] at h
+    | .glyph g s, [], _ => simp [wellFormed]
+    | .glyph g s, .wideRight :: _, hp => exact (hp g s _ rfl rfl).elim
+    | .glyph g s, .blank _ :: _, _ =>
+      simp only [wellFormed, Bool.and_eq_true] at h
+      exact ih (by simpa [wellFormed] using h.2)
+    | .glyph g s, .glyph _ _ :: _, _ =>
+      simp only [wellFormed, Bool.and_eq_true] at h
+      exact ih (by simpa [wellFormed] using h.2)
 
 end Cell
 
-structure Buffer where
-  width : Nat
-  height : Nat
-  /-- Row by row, `width * height` of them. -/
-  cells : Array Cell
-  deriving DecidableEq, Repr, Inhabited
+open Cell in
+/-- One row of `w` cells. -/
+structure Row (cs : Charset) (w : Nat) where
+  cells : List (Cell cs)
+  length_eq : cells.length = w
+  wf : wellFormed cells = true
+
+namespace Row
+
+open Cell
+
+instance {w : Nat} : DecidableEq (Row cs w) := fun a b =>
+  if h : a.cells = b.cells then isTrue (by cases a; cases b; simp_all)
+  else isFalse fun e => h (congrArg Row.cells e)
+
+def blank (w : Nat) (s : Style := {}) : Row cs w :=
+  ⟨List.replicate w (.blank s), by simp, wellFormed_replicate_blank w s⟩
+
+/-- `seg` written from column `x`, clipped at the right edge. A two-cell glyph half covered
+by it, or cut by the edge, becomes a blank. -/
+def splice {w : Nat} (r : Row cs w) (x : Nat) (seg : List (Cell cs)) (hseg : wellFormed seg) :
+    Row cs w :=
+  if hx : x ≤ w then
+    let mid := cut (w - x) seg
+    have hmid : mid.length ≤ w - x := by simp [mid, length_cut]; omega
+    ⟨cut x r.cells ++ mid ++ skip (x + mid.length) r.cells,
+      by simp only [List.length_append, length_cut, length_skip, r.length_eq]; omega,
+      wellFormed_append (wellFormed_append (wellFormed_cut x r.wf) (wellFormed_cut _ hseg))
+        (wellFormed_skip _ r.wf)⟩
+  else r
+
+/-- How many cells of `seg` `splice` writes from column `x`. -/
+def written (w x : Nat) (seg : List (Cell cs)) : Nat := (cut (w - x) seg).length
+
+theorem written_le (w x : Nat) (seg : List (Cell cs)) : written w x seg ≤ w - x := by
+  simp [written, length_cut]; omega
+
+/-- The `n` cells from column `x`, blank past the end. A two-cell glyph cut by either edge
+becomes a blank. -/
+def slice {w : Nat} (r : Row cs w) (x n : Nat) (s : Style := {}) : Row cs n :=
+  let l := cut n (skip x r.cells)
+  ⟨l ++ List.replicate (n - l.length) (.blank s),
+    by simp only [List.length_append, List.length_replicate, l, length_cut]; omega,
+    wellFormed_append (wellFormed_cut n (wellFormed_skip x r.wf)) (wellFormed_replicate_blank _ s)⟩
+
+def get {w : Nat} (r : Row cs w) (x : Nat) : Cell cs := r.cells.getD x default
+
+end Row
+
+structure Buffer (cs : Charset) (w h : Nat) where
+  rows : Vector (Row cs w) h
+  deriving DecidableEq
 
 namespace Buffer
 
-def blank (width height : Nat) (style : Style := {}) : Buffer :=
-  { width, height, cells := .replicate (width * height) { style } }
+variable {w h : Nat}
 
-def get (b : Buffer) (x y : Nat) : Cell :=
-  if x < b.width && y < b.height then b.cells[y * b.width + x]?.getD {} else {}
+def blank (w h : Nat) (s : Style := {}) : Buffer cs w h := ⟨.replicate h (.blank w s)⟩
 
-/-- Replace one cell, outside the buffer doing nothing. -/
-private def put (b : Buffer) (x y : Nat) (c : Cell) : Buffer :=
-  if x < b.width && y < b.height then { b with cells := b.cells.set! (y * b.width + x) c } else b
+instance : Inhabited (Buffer cs w h) := ⟨blank w h⟩
 
-/-- Set a cell. Overwriting half of a double-width character blanks its other half. -/
-def set (b : Buffer) (x y : Nat) (c : Cell) : Buffer := Id.run do
-  let mut b := b
-  let old := b.get x y
-  if old.isContinuation && x > 0 then
-    b := b.put (x - 1) y { style := (b.get (x - 1) y).style }
-  if charWidth old.char == 2 && (b.get (x + 1) y).isContinuation then
-    b := b.put (x + 1) y { style := (b.get (x + 1) y).style }
-  b.put x y c
+def width (_ : Buffer cs w h) : Nat := w
 
-/-- Write `s` from column `x` of row `y`, clipped at the right edge, and return the column after
-it. A double-width character that does not fit is not drawn. -/
-def putString (b : Buffer) (x y : Nat) (s : String) (style : Style := {}) : Buffer × Nat :=
-  s.foldl (init := (b, x)) fun (b, x) c =>
-    match charWidth c with
-    | 0 => (b, x)
-    | 1 => if x < b.width then (b.set x y { char := c, style }, x + 1) else (b, x)
-    | _ =>
-      if x + 1 < b.width then
-        ((b.set x y { char := c, style }).set (x + 1) y (.continuation style), x + 2)
-      else (b, x)
+def height (_ : Buffer cs w h) : Nat := h
+
+/-- The cell at `(x, y)`; outside the buffer, a blank. -/
+def get (b : Buffer cs w h) (x y : Nat) : Cell cs :=
+  if hy : y < h then b.rows[y].get x else default
+
+def modifyRow (b : Buffer cs w h) (y : Nat) (f : Row cs w → Row cs w) : Buffer cs w h :=
+  if hy : y < h then ⟨b.rows.set y (f b.rows[y])⟩ else b
+
+/-- Write `seg` from column `x` of row `y`, clipped at the edges. -/
+def putCells (b : Buffer cs w h) (x y : Nat) (seg : List (Cell cs)) (hseg : Cell.wellFormed seg) :
+    Buffer cs w h :=
+  b.modifyRow y (·.splice x seg hseg)
+
+/-- Write `gs` from column `x` of row `y`, clipped at the right edge, and return the column after
+them. -/
+def putString (b : Buffer cs w h) (x y : Nat) (gs : List (Glyph cs)) (style : Style := {}) :
+    Buffer cs w h × {x' : Nat // x' ≤ w} :=
+  let seg := Cell.ofGlyphs style gs
+  (b.putCells x y seg (Cell.wellFormed_ofGlyphs style gs),
+    ⟨min w (x + Row.written w x seg), Nat.min_le_left _ _⟩)
 
 /-- Copy `src` onto `b` with its top left corner at `(x, y)`, clipped at the edges. -/
-def blit (b : Buffer) (x y : Nat) (src : Buffer) : Buffer := Id.run do
-  let mut b := b
-  for j in [0:src.height] do
-    for i in [0:src.width] do
-      b := b.put (x + i) (y + j) (src.get i j)
-  -- A double-width character cut by the right edge
-  if x + src.width ≤ b.width && x + src.width > 0 then
-    for j in [0:src.height] do
-      if (b.get (x + src.width) (y + j)).isContinuation
-          && charWidth (b.get (x + src.width - 1) (y + j)).char != 2 then
-        b := b.put (x + src.width) (y + j) { style := (b.get (x + src.width) (y + j)).style }
-  b
+def blit {sw sh : Nat} (b : Buffer cs w h) (x y : Nat) (src : Buffer cs sw sh) : Buffer cs w h :=
+  src.rows.toList.zipIdx.foldl (init := b) fun b (r, j) => b.putCells x (y + j) r.cells r.wf
+
+/-- The `cw` by `ch` part of `b` from `(x, y)`, blank past its edges. -/
+def crop (b : Buffer cs w h) (x y cw ch : Nat) : Buffer cs cw ch :=
+  ⟨.ofFn fun j => if hy : y + j.val < h then b.rows[y + j.val].slice x cw else .blank cw⟩
 
 /-- The characters of row `y`, without continuations. -/
-def row (b : Buffer) (y : Nat) : String :=
-  String.ofList <| (List.range b.width).filterMap fun x =>
-    let c := b.get x y
-    if c.isContinuation then none else some c.char
+def row (b : Buffer cs w h) (y : Nat) : String :=
+  if hy : y < h then
+    String.ofList <| b.rows[y].cells.filterMap fun c => if c.isContinuation then none else some c.char
+  else ""
 
 /-- The buffer's text, one line per row. -/
-def lines (b : Buffer) : List String := (List.range b.height).map b.row
+def lines (b : Buffer cs w h) : List String := (List.range h).map b.row
 
 end Buffer
 

@@ -8,54 +8,80 @@ import Tessera.Ansi
 
 /-! # Drawing a frame
 
-`diff old new` is the output that turns a terminal showing `old` into one showing `new`. It
-writes only the cells that changed, moving the cursor once per run of them and changing the style
-only when it differs from the last cell written. -/
+`diffOps old new` is the list of operations that turns a terminal showing `old` into one showing
+`new`, two frames of the same size. It writes only the cells that changed, moving the cursor once
+per run of them and changing the style only when it differs from the last cell written.
+`redrawOps new` clears the screen and draws all of `new`. `diff` and `redraw` are their output,
+and a terminal reads that output as nothing but those operations (`diff_own`, `redraw_own`). -/
 
 namespace Tessera
 
-structure DiffState where
-  out : String := ""
+open Ansi
+
+variable {cs : Charset}
+
+structure DiffState (cs : Charset) where
+  ops : Array (Op cs) := #[]
   /-- Where the terminal's cursor is, if known. -/
   cursor : Option (Nat × Nat) := none
   style : Option Style := none
 
 namespace DiffState
 
-def write (s : DiffState) (x y : Nat) (c : Cell) : DiffState := Id.run do
-  let mut s := s
-  if s.cursor != some (x, y) then
-    s := { s with out := s.out ++ Ansi.moveTo x y }
-  if s.style != some c.style then
-    s := { s with out := s.out ++ Ansi.sgr c.style, style := some c.style }
-  -- A cell holds a character to draw. One that takes no cell, such as a control character put
-  -- there with `Buffer.set`, would act on the terminal or move the cursor; it is drawn as `␦`.
-  let ch := if charWidth c.char == 0 then '␦' else c.char
-  { s with out := s.out.push ch, cursor := some (x + charWidth ch, y) }
+/-- Write `g`, `width` cells wide, at `(x, y)`. -/
+def write (s : DiffState cs) (x y : Nat) (g : Glyph cs) (width : Nat) (style : Style) :
+    DiffState cs :=
+  let move : List (Op cs) := if s.cursor = some (x, y) then [] else [.moveTo x y]
+  let sgr : List (Op cs) := if s.style = some style then [] else [.sgr style]
+  { ops := s.ops ++ (move ++ sgr ++ [Op.print g]).toArray, cursor := some (x + width, y),
+    style := some style }
 
 end DiffState
 
-/-- Write the cells of row `y` for which `changed` holds. -/
-def drawRow (b : Buffer) (y : Nat) (changed : Nat → Bool) (s : DiffState) : DiffState :=
-  (List.range b.width).foldl (init := s) fun s x =>
-    let c := b.get x y
-    if c.isContinuation || !changed x then s else s.write x y c
+/-- Write the cells of a row, from column `x`, that differ from those of `old` in the same
+place, or all of them if `all`. A two-cell glyph is written when either of its halves changed. -/
+def drawRow (y : Nat) (all : Bool) :
+    (x : Nat) → (new old : List (Cell cs)) → DiffState cs → DiffState cs
+  | x, .glyph g s :: .wideRight :: ns, o₁ :: o₂ :: os, st =>
+    let st := if all || .glyph g s != o₁ || .wideRight != o₂ then st.write x y g 2 s else st
+    drawRow y all (x + 2) ns os st
+  | x, c :: ns, o :: os, st =>
+    let st := if all || c != o then
+      match c with
+      | .glyph g s => st.write x y g g.width s
+      | .blank s => st.write x y .space 1 s
+      | .wideRight => st
+      else st
+    drawRow y all (x + 1) ns os st
+  | _, _, _, st => st
 
-/-- The output that turns a terminal showing `old` into one showing `new`; with no `old`, or one
-of another size, it clears the screen and draws all of `new`. -/
-def diff (old : Option Buffer) (new : Buffer) : String :=
-  let full := match old with
-    | some o => o.width != new.width || o.height != new.height
-    | none => true
-  let changed (y x : Nat) : Bool :=
-    full || match old with
-      | none => true
-      | some o =>
-        new.get x y != o.get x y
-          -- a double-width character whose right half changed is drawn again
-          || ((new.get (x + 1) y).isContinuation && new.get (x + 1) y != o.get (x + 1) y)
-  let start : DiffState := if full then { out := Ansi.resetStyle ++ Ansi.clearScreen } else {}
-  let s := (List.range new.height).foldl (init := start) fun s y => drawRow new y (changed y) s
-  if s.out.isEmpty then "" else s.out ++ Ansi.resetStyle
+def drawRows {w h : Nat} (old new : Buffer cs w h) (all : Bool) (start : DiffState cs) :
+    Array (Op cs) :=
+  ((List.range h).foldl (init := start) fun s y =>
+    drawRow y all 0 (new.rows[y]?.map (·.cells) |>.getD [])
+      (old.rows[y]?.map (·.cells) |>.getD []) s).ops
+
+/-- The operations that turn a terminal showing `old` into one showing `new`. -/
+def diffOps {w h : Nat} (old new : Buffer cs w h) : List (Op cs) :=
+  let ops := drawRows old new false {}
+  if ops.isEmpty then [] else ops.toList ++ [.sgr {}]
+
+/-- The operations that clear the screen and draw all of `new`. -/
+def redrawOps {w h : Nat} (new : Buffer cs w h) : List (Op cs) :=
+  (drawRows new new true { ops := #[.sgr {}, .clear] }).toList ++ [.sgr {}]
+
+def diff {w h : Nat} (old new : Buffer cs w h) : String := encode (diffOps old new)
+
+def redraw {w h : Nat} (new : Buffer cs w h) : String := encode (redrawOps new)
+
+/-- A terminal reads a frame's output as printed characters and Tessera's own control sequences,
+and nothing else. -/
+theorem diff_own {w h : Nat} (old new : Buffer cs w h) :
+    ∀ t ∈ VT.tokens (diff old new).toList, Own t :=
+  output_own _
+
+theorem redraw_own {w h : Nat} (new : Buffer cs w h) :
+    ∀ t ∈ VT.tokens (redraw new).toList, Own t :=
+  output_own _
 
 end Tessera

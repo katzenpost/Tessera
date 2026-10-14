@@ -3,135 +3,61 @@ SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
 SPDX-License-Identifier: AGPL-3.0-only
 -/
 
-import Tessera.Widget
+import Tessera.Text
 
 /-! # Text from elsewhere
 
 A terminal is an interpreter: every character a program writes to it is an instruction. Text the
 program did not write itself, such as a chat message, a file name or a name someone chose, can
 carry instructions that set the clipboard or the title, make the terminal type input back into
-the program, move the cursor, or reorder what is shown. This module turns such text into `Safe`
-text, which `Widget.safe` draws.
+the program, move the cursor, or reorder what is shown. `Untrusted.line` and `Untrusted.lines`
+turn such text into `Text`, keeping characters by an allowlist and showing every other one as a
+visible stand-in, so that an attempt shows.
 
-Filtering keeps characters by an allowlist, not a blocklist: a character is kept only when it is
-printable and the terminal and Tessera agree on how many cells it takes. Anything else becomes a
-visible stand-in rather than vanishing, so that an attempt shows: a control character becomes its
-Control Picture (`␛` for ESC, `␊` for a newline), DEL becomes `␡`, and every other character
-refused becomes `␦`.
-
-Agreeing on width matters as much as refusing controls. Tessera lays a row out by its own idea of
-each character's width; a character the terminal draws wider or narrower shifts everything after
-it on that row, into whatever is drawn beside it. So the allowlist holds the scripts and symbols
-terminals draw one cell wide, and the characters `charWidth` and terminals both take as two cells
-wide (CJK, and emoji drawn as pictures). East Asian ambiguous-width characters are taken as one
-cell, as terminals outside CJK locales draw them.
-
+This module adds what names, pastes and text passed on need beyond that.
 `docs/TUI_SECURITY_GUIDELINES.md` covers the rest of what a TUI showing such text should do. -/
 
 namespace Tessera.Untrusted
 
-/-- Text that may be drawn: filtered, or written by the program itself. One line. -/
-structure Safe where
-  private mk ::
-  text : String
-  deriving Inhabited, BEq, Repr
+variable {cs : Charset}
 
-/-- Text the program wrote itself, which needs no filtering. Never use it for text from
-elsewhere. -/
-def Safe.trusted (s : String) : Safe := ⟨s⟩
+/-! ## Names -/
 
-instance : Append Safe := ⟨fun a b => ⟨a.text ++ b.text⟩⟩
+/-- Glyphs a name could use to fake a badge the program draws: locks and keys, check marks,
+shields and warning signs. -/
+def badgeRanges : List (Nat × Nat) :=
+  [(0x2611, 0x2611), (0x26A0, 0x26A0), (0x2705, 0x2705), (0x2713, 0x2714), (0x1F50F, 0x1F513),
+   (0x1F6E1, 0x1F6E1)]
 
-/-- The stand-in for a character refused that is not a control character. -/
-def substitute : Char := '␦'
+def Badge (c : Char) : Prop := inRanges c.toNat badgeRanges = true
 
-structure Policy where
-  /-- Combining marks kept on one character; beyond them, a stand-in. -/
-  maxMarks : Nat := 4
-  /-- Lines of a text kept by `lines`. -/
-  maxLines : Nat := 20
-  tabWidth : Nat := 4
+instance : DecidablePred Badge := fun _ => inferInstanceAs (Decidable (_ = true))
 
-def inRanges (n : Nat) (rs : List (Nat × Nat)) : Bool := rs.any fun (lo, hi) => lo ≤ n && n ≤ hi
+theorem controlPicture_not_badge {c : Char} (h : IsControlPicture c) : ¬ Badge c := fun hb => by
+  obtain ⟨r, hr, h1, h2⟩ := inRanges_iff.mp hb
+  have hall : ∀ r ∈ badgeRanges, r.2 < 0x2400 ∨ 0x2426 < r.1 := by decide
+  have := hall r hr
+  simp only [IsControlPicture] at h
+  omega
 
-/-- Combining accents, kept on the character before them. -/
-def combining (n : Nat) : Bool := 0x300 ≤ n && n ≤ 0x36F
+/-- A name: text from elsewhere with no glyph that could fake a badge. -/
+structure Ident (cs : Charset) where
+  text : Text cs .remote
+  noBadge : ∀ c ∈ text.text.toList, ¬ Badge c
 
-/-- One cell wide, to Tessera and to terminals. -/
-def narrow (n : Nat) : Bool :=
-  inRanges n [
-    (0x20, 0x7E), (0xA0, 0xAC), (0xAE, 0x2FF),        -- Latin, not the soft hyphen
-    (0x370, 0x377), (0x37A, 0x37F), (0x384, 0x3FF),   -- Greek
-    (0x400, 0x482), (0x48A, 0x52F),                   -- Cyrillic, not its combining marks
-    (0x531, 0x556), (0x561, 0x587),                   -- Armenian
-    (0x5D0, 0x5EA),                                   -- Hebrew letters
-    (0x621, 0x64A),                                   -- Arabic letters
-    (0x10A0, 0x10FF),                                 -- Georgian
-    (0x1E00, 0x1FFE),                                 -- Latin and Greek extended
-    (0x2010, 0x2027), (0x2030, 0x205E),               -- punctuation, not the invisibles
-    (0x2070, 0x209C), (0x20A0, 0x20C0),               -- super- and subscripts, currency
-    (0x2100, 0x214F), (0x2150, 0x218B),               -- letterlike, number forms
-    (0x2190, 0x21FF), (0x2200, 0x22FF),               -- arrows, mathematics
-    (0x2400, 0x2426),                                 -- control pictures
-    (0x2500, 0x257F)]                                 -- box drawing
+namespace Ident
 
-/-- Whether `c` may be drawn as it is: its width is certain, or it is a combining accent. -/
-def allowed (c : Char) : Bool :=
-  let n := c.toNat
-  combining n || ((narrow n || doubleWidth n) && !zeroWidth n)
-
-/-- What a character refused shows as. -/
-def standIn (c : Char) : Char :=
-  let n := c.toNat
-  if n < 0x20 then Char.ofNat (0x2400 + n)
-  else if n == 0x7F then '␡'
-  else substitute
-
-/-- One line, filtered: a newline in it shows as `␊`, as every character refused shows. -/
-def line (s : String) (p : Policy := {}) : Safe := Id.run do
-  let mut out := ""
-  let mut marks := 0
-  let mut base := false
-  for c in s.toList do
-    if combining c.toNat then
-      if base && marks < p.maxMarks then
-        out := out.push c
-      else if !base || marks == p.maxMarks then
-        out := out.push substitute
-      marks := marks + 1
-    else if allowed c then
-      out := out.push c
-      marks := 0
-      base := true
-    else
-      out := out.push (standIn c)
-      marks := 0
-      base := false
-  return ⟨out⟩
-
-/-- A text as its lines, filtered: tabs become spaces, a carriage return before a newline goes,
-and of more than `maxLines` lines, the last kept says how many more there were. -/
-def lines (s : String) (p : Policy := {}) : List Safe :=
-  let tab := String.ofList (List.replicate p.tabWidth ' ')
-  let ls := ((s.replace "\r\n" "\n").splitOn "\n").map fun l => line (l.replace "\t" tab) p
-  if ls.length ≤ p.maxLines then ls
-  else ls.take (p.maxLines - 1) ++ [⟨s!"[{ls.length - (p.maxLines - 1)} more lines not shown]"⟩]
-
-/-- A paste without bracketed paste's start and end markers, either of which, left in, would let
-the paste end early and the rest of it be taken as keys typed. -/
-def pasted (s : String) : String := (s.replace "\x1b[200~" "").replace "\x1b[201~" ""
-
-/-- Text without the characters that another program's terminal would act on or reorder text by:
-controls other than newlines and tabs, and bidi controls. For text passed on, such as a message
-sent. -/
-def withoutControls (s : String) : String :=
-  String.ofList <| s.toList.filter fun c =>
-    let n := c.toNat
-    c == '\n' || c == '\t' ||
-      !(n < 0x20 || (0x7F ≤ n && n < 0xA0) || inRanges n [(0x202A, 0x202E), (0x2066, 0x2069),
-        (0x200E, 0x200F), (0x61C, 0x61C)])
-
-/-! ## Names that look alike -/
+/-- A name from elsewhere, filtered as `line` filters, with each badge glyph shown as `␦`. -/
+def ofRemote (s : String) (p : Policy := {}) : Ident cs :=
+  let pre := String.ofList (s.toList.map fun c => if Badge c then substitute else c)
+  ⟨line pre p, fun c hc => by
+    rcases line_sub pre p c hc with h | h
+    · simp only [pre, String.toList_ofList, List.mem_map] at h
+      obtain ⟨d, _, rfl⟩ := h
+      split
+      · exact controlPicture_not_badge ⟨by decide, by decide⟩
+      · assumption
+    · exact controlPicture_not_badge h⟩
 
 /-- Letters of other scripts drawn like Latin ones, and digits and symbols drawn like letters, as
 the Latin letter they pass for: a small part of Unicode's confusables (UTS #39), for the scripts
@@ -148,25 +74,53 @@ def confusables : List (Char × Char) :=
 
 /-- What a name looks like, ignoring case, look-alike letters, accents and separators: two names
 with one skeleton are easily taken for each other. -/
-def skeleton (s : String) : String :=
-  String.ofList <| (line s).text.toList.filterMap fun c =>
-    if combining c.toNat || c == ' ' || c == '_' || c == '-' || c == '.' then none
+def skeletonOf (s : String) : String :=
+  String.ofList <| s.toList.filterMap fun c =>
+    if isCombining c || c == ' ' || c == '_' || c == '-' || c == '.' then none
     else some ((confusables.lookup c).getD c.toLower)
 
+def skeleton (i : Ident cs) : String := skeletonOf i.text.text
+
 /-- Whether a name mixes Latin letters with Greek or Cyrillic ones, as a forged name might. -/
-def mixedScript (s : String) : Bool :=
+def mixedScript (i : Ident cs) : Bool :=
+  let s := i.text.text
   s.any (fun c => c.isAlpha) && s.any fun c => 0x370 ≤ c.toNat && c.toNat ≤ 0x52F
 
+end Ident
+
+/-! ## Text passed on -/
+
+def pasteStart : String := "\x1b[200~"
+
+def pasteEnd : String := "\x1b[201~"
+
+/-- A paste, without bracketed paste's start and end markers, either of which, left in, would
+let the paste end early and the rest of it be taken as keys typed. -/
+structure Pasted where
+  text : String
+  noMarkers : ¬ pasteStart.toList <:+: text.toList ∧ ¬ pasteEnd.toList <:+: text.toList
+
+/-- A paste without its markers and without ESC, which only a marker or an escape sequence
+would begin with. -/
+def pasted (s : String) : Pasted :=
+  let l := ((s.replace pasteStart "").replace pasteEnd "").toList.filter (· != '\x1b')
+  have noEsc : '\x1b' ∉ l := by simp [l]
+  have hesc : ∀ m : String, '\x1b' ∈ m.toList → ¬ m.toList <:+: l := fun _ hm hi =>
+    noEsc (hi.subset hm)
+  ⟨String.ofList l, by
+    simp only [String.toList_ofList]
+    exact ⟨hesc _ (by decide), hesc _ (by decide)⟩⟩
+
+/-- A character another program's terminal would act on, or reorder text by. -/
+def Steers (c : Char) : Prop :=
+  (c.toNat < 0x20 ∧ c ≠ '\n' ∧ c ≠ '\t') ∨ (0x7F ≤ c.toNat ∧ c.toNat < 0xA0) ∨ Bidi c
+
+instance : DecidablePred Steers := fun _ => inferInstanceAs (Decidable (_ ∨ _))
+
+/-- Text without the characters that another program's terminal would act on or reorder text by:
+controls other than newlines and tabs, and bidi controls. For text passed on, such as a message
+sent. -/
+def withoutControls (s : String) : {t : String // ∀ c ∈ t.toList, ¬ Steers c} :=
+  ⟨String.ofList (s.toList.filter fun c => !decide (Steers c)), by simp⟩
+
 end Tessera.Untrusted
-
-namespace Tessera.Widget
-
-open Untrusted
-
-/-- Safe text, on one row. -/
-def safe (s : Safe) : Widget := str s.text
-
-/-- Safe text, word-wrapped. -/
-def safeTxt (s : Safe) : Widget := txt s.text
-
-end Tessera.Widget

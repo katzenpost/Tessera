@@ -3,9 +3,14 @@ SPDX-FileCopyrightText: Copyright (C) 2026 David Stainton
 SPDX-License-Identifier: AGPL-3.0-only
 -/
 
+import Tessera.Char
+
 /-! # Test helpers -/
 
 namespace Tessera.Tests
+
+/-- The charset the tests draw with. -/
+abbrev CS : Charset := .standard
 
 abbrev TestM := StateT (Nat × Nat) IO
 
