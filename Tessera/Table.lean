@@ -65,13 +65,14 @@ def columnWidths (cols : List Column) (cells : List (List Nat)) (width : Nat) : 
 
 namespace Widget
 
-/-- `rows` in columns `cols` under the program's `header`, which is drawn bold. -/
+/-- `rows` in columns `cols` under the program's `header`, which is drawn bold, each on one row,
+however much room the table is given. -/
 def table {t : Origin} [Shows t o] (cols : List Column) (header : List (Text cs .app))
     (rows : List (List (Text cs t))) : Widget cs o :=
   sized (vPolicy := .fixed) fun ctx =>
     let widths := columnWidths cols (header.map (·.width) :: rows.map (·.map (·.width))) ctx.width
     let line {u : Origin} [Shows u o] (cells : List (Text cs u)) : Widget cs o :=
-      hBox <| (widths.zipIdx.map fun (w, j) =>
+      vLimit 1 <| hBox <| (widths.zipIdx.map fun (w, j) =>
         let cell := (cells[j]?.getD .empty).truncate w
         hLimit (w + 1) (hBox [str cell, fill])) ++ [fill]
     vBox (withStyle { bold := true } (line header) :: rows.map line)
