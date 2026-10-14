@@ -48,7 +48,7 @@ structure Charset where
 
 `Printable` is an allowlist. A character is in it only when it is not a control or format character and Tessera and terminals agree on its width. `Charset.standard` holds:
 - the scripts and symbols terminals draw one cell wide;
-- the East Asian wide and fullwidth characters, and emoji drawn as pictures, which take two cells;
+- the East Asian wide and fullwidth characters, and emoji drawn as pictures, which take two cells, except those that terminals with older width tables draw as one: the emoji and syllables added in Unicode 13 and later, and code points not yet assigned in wide blocks;
 - East Asian ambiguous-width characters, as one cell.
 
 `Charset.cjk` takes the ambiguous-width characters as two cells, as terminals in CJK locales draw them.
@@ -67,7 +67,7 @@ structure Emulator (cs : Charset) where
   agrees : ∀ c, cs.Printable c → width c = cs.width c
 ```
 
-Theorems about where text ends and where the cursor stands take an `Emulator` as an argument. Theorems about control characters do not take one: they hold for any terminal.
+Theorems about where text ends and where the cursor stands take an `Emulator` as an argument. Theorems about control characters do not take one: they hold for any terminal. `make vterm` checks the assumption against libvterm for every character `Charset.standard` allows; it is why the newer wide characters above are left out.
 
 ## Text
 
