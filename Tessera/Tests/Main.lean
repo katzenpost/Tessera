@@ -7,6 +7,7 @@ import Tessera.Tests.Draw
 import Tessera.Tests.Widgets
 import Tessera.Tests.AppLoop
 import Tessera.Tests.Untrusted
+import Tessera.Tests.Axioms
 
 open Tessera.Tests
 

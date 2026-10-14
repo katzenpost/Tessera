@@ -52,33 +52,13 @@ structure Policy where
   maxLines : Nat := 20
   tabWidth : Nat := 4
 
-def inRanges (n : Nat) (rs : List (Nat × Nat)) : Bool := rs.any fun (lo, hi) => lo ≤ n && n ≤ hi
-
 /-- Combining accents, kept on the character before them. -/
 def combining (n : Nat) : Bool := 0x300 ≤ n && n ≤ 0x36F
-
-/-- One cell wide, to Tessera and to terminals. -/
-def narrow (n : Nat) : Bool :=
-  inRanges n [
-    (0x20, 0x7E), (0xA0, 0xAC), (0xAE, 0x2FF),        -- Latin, not the soft hyphen
-    (0x370, 0x377), (0x37A, 0x37F), (0x384, 0x3FF),   -- Greek
-    (0x400, 0x482), (0x48A, 0x52F),                   -- Cyrillic, not its combining marks
-    (0x531, 0x556), (0x561, 0x587),                   -- Armenian
-    (0x5D0, 0x5EA),                                   -- Hebrew letters
-    (0x621, 0x64A),                                   -- Arabic letters
-    (0x10A0, 0x10FF),                                 -- Georgian
-    (0x1E00, 0x1FFE),                                 -- Latin and Greek extended
-    (0x2010, 0x2027), (0x2030, 0x205E),               -- punctuation, not the invisibles
-    (0x2070, 0x209C), (0x20A0, 0x20C0),               -- super- and subscripts, currency
-    (0x2100, 0x214F), (0x2150, 0x218B),               -- letterlike, number forms
-    (0x2190, 0x21FF), (0x2200, 0x22FF),               -- arrows, mathematics
-    (0x2400, 0x2426),                                 -- control pictures
-    (0x2500, 0x257F)]                                 -- box drawing
 
 /-- Whether `c` may be drawn as it is: its width is certain, or it is a combining accent. -/
 def allowed (c : Char) : Bool :=
   let n := c.toNat
-  combining n || ((narrow n || doubleWidth n) && !zeroWidth n)
+  combining n || isPrintable c
 
 /-- What a character refused shows as. -/
 def standIn (c : Char) : Char :=

@@ -93,6 +93,11 @@ def onlyCsi (out : String) : Bool :=
 def tests : TestM Unit := do
   checkEq "widths" [1, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0]
     (['a', '漢', '🦀', '🚀', '⌚', '\x07', '́', '‮', '‍', '️', '­'].map charWidth)
+  checkEq "ambiguous widths in a CJK locale" [1, 2, 2, 2, 2]
+    (['a', 'α', 'Ж', '→', '─'].map Charset.cjk.width)
+  checkEq "and outside one" [1, 1, 1, 1, 1] (['a', 'α', 'Ж', '→', '─'].map Charset.standard.width)
+  check "the allowlist refuses controls, bidi, invisibles and marks"
+    (['\x1b', '\u009b', '\x7f', '‮', '⁦', '​', '﻿', '́'].all (!isPrintable ·))
   let mut g := mkStdGen 2026
   let mut ok := true
   for _ in [0:2000] do

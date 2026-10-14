@@ -41,6 +41,7 @@ structure Charset where
   printable_not_c1  : ∀ c, Printable c → ¬ (0x80 ≤ c.toNat ∧ c.toNat < 0xA0)
   printable_not_bidi      : ∀ c, Printable c → ¬ Bidi c
   printable_not_invisible : ∀ c, Printable c → ¬ Invisible c
+  printable_not_combining : ∀ c, Printable c → ¬ Combining c
 ```
 
 `Printable` is an allowlist. A character is in it only when it is not a control or format character and Tessera and terminals agree on its width. `Charset.standard` holds:
@@ -50,7 +51,7 @@ structure Charset where
 
 `Charset.cjk` takes the ambiguous-width characters as two cells, as terminals in CJK locales draw them.
 
-Both charsets are defined by tables of code point ranges. Each law is proved by checking it on every range in the table, a finite check, and lifting the result to all characters.
+Both charsets allow the same characters and differ only in width, so both are built by `Charset.ofPrintable`, which proves the laws once. The characters are defined by tables of code point ranges. Each law is proved by checking it on every range in the table, a finite check, and lifting the result to all characters.
 
 ### The terminal assumption
 
