@@ -70,18 +70,20 @@ def diffOps {w h : Nat} (old new : Buffer cs w h) : List (Op cs) :=
 def redrawOps {w h : Nat} (new : Buffer cs w h) : List (Op cs) :=
   (drawRows new new true { ops := #[.sgr {}, .clear] }).toList ++ [.sgr {}]
 
-def diff {w h : Nat} (old new : Buffer cs w h) : String := encode (diffOps old new)
+def diff {w h : Nat} (old new : Buffer cs w h) (p : Placement := .fullscreen) : String :=
+  encode (diffOps old new) p
 
-def redraw {w h : Nat} (new : Buffer cs w h) : String := encode (redrawOps new)
+def redraw {w h : Nat} (new : Buffer cs w h) (p : Placement := .fullscreen) : String :=
+  encode (redrawOps new) p
 
 /-- A terminal reads a frame's output as printed characters and Tessera's own control sequences,
 and nothing else. -/
-theorem diff_own {w h : Nat} (old new : Buffer cs w h) :
-    ∀ t ∈ VT.tokens (diff old new).toList, Own t :=
-  output_own _
+theorem diff_own {w h : Nat} (old new : Buffer cs w h) (p : Placement) :
+    ∀ t ∈ VT.tokens (diff old new p).toList, Own t :=
+  output_own _ p
 
-theorem redraw_own {w h : Nat} (new : Buffer cs w h) :
-    ∀ t ∈ VT.tokens (redraw new).toList, Own t :=
-  output_own _
+theorem redraw_own {w h : Nat} (new : Buffer cs w h) (p : Placement) :
+    ∀ t ∈ VT.tokens (redraw new p).toList, Own t :=
+  output_own _ p
 
 end Tessera

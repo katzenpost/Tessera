@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Tessera.Widget
+import Tessera.Untrusted
 import Tessera.Tests.Util
 
 /-! # Widgets, drawn into small screens -/
@@ -18,8 +19,13 @@ def tests : TestM Unit := do
   checkEq "str" ["hi  ", "    "] (drawn (str t!"hi") 4 2)
   checkEq "str lines" ["ab ", "cde"] (drawn (strs [t!"ab", t!"cde"]) 3 2)
   checkEq "str clipped" ["abc"] (drawn (strs [t!"abcdef", t!"x"]) 3 1)
-  checkEq "wrap" ["one two", "three", "abcdefg", "hi"] (wrap CS 7 "one two three abcdefghi")
-  checkEq "wrap newline" ["a", "b c"] (wrap CS 5 "a\nb c")
+  let wrapped (t : Text CS .app) (n : Nat) := (t.wrap n).map (·.text.text)
+  checkEq "wrap" ["one two", "three", "abcdefg", "hi"] (wrapped t!"one two three abcdefghi" 7)
+  checkEq "wrap wide" ["漢字", "漢a"] (wrapped t!"漢字漢a" 4)
+  checkEq "wrap wide at the edge" ["ab", "漢c"] (wrapped t!"ab漢c" 3)
+  checkEq "wrap zero" ([] : List String) (wrapped t!"abc" 0)
+  checkEq "wrap keeps accents" ["e\u0301e\u0301", "e\u0301"]
+    ((Untrusted.line (cs := CS) "e\u0301e\u0301e\u0301").wrap 2 |>.map (·.text.text))
   checkEq "txt" ["the  ", "quick", "fox  "] (drawn (txt t!"the quick fox") 5 3)
   checkEq "fill" ["..", ".."] (drawn (fill '.') 2 2)
   checkEq "hBox of fixed" ["ab cd "] (drawn (hBox [str t!"ab", str t!" cd"]) 6 1)

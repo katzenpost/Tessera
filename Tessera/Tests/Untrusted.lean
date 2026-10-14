@@ -72,7 +72,14 @@ def corpus : List (String × String) := [
   ("a private-use glyph", " verified"),
   ("wide text", "全角の文字がたくさん全角の文字がたくさん全角の文字がたくさん"),
   ("a bell", "ding\x07ding"),
-  ("DEL", "back\x7Fspace")]
+  ("DEL", "back\x7Fspace"),
+  ("OSC 8 hyperlink", "\x1b]8;;https://evil.example\x1b\\click\x1b]8;;\x1b\\"),
+  ("a status report query", "\x1b[6n"),
+  ("a DECRQSS query", "\x1bP$qm\x1b\\"),
+  ("kitty graphics", "\x1b_Gf=100;iVBORw0KGgo=\x1b\\"),
+  ("sixel", "\x1bPq#0;2;0;0;0#1!6~\x1b\\"),
+  ("a marker hidden in a marker", "\x1b[2\x1b[201~01~"),
+  ("a C1 OSC", "\u009d0;pwned\u009c")]
 
 /-- `text` between two bordered panes, as an application might draw a message. -/
 def framed (text : List (Text CS .remote)) : Buffer CS 40 6 :=

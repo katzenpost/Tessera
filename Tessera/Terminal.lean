@@ -8,7 +8,13 @@ import Tessera.Diff
 /-! # Drawing is correct
 
 A model of a terminal that measures glyphs as an `Emulator` does, and the proof that drawing a
-frame leaves it showing that frame: `diff_correct` and `redraw_correct`. -/
+frame leaves it showing that frame: `diff_correct` and `redraw_correct`.
+
+The model's screen is the frame's own rows, whether they are the whole screen or, inline, the
+rows from the place the terminal remembered: there a move returns to that place first, so its
+positions are counted from it, and the operations that make room for the frame and leave it
+happen outside it. A picture is drawn over the cells, not in them, and leaves them as they are in
+the model; the application loop draws pictures again after any change to the cells. -/
 
 namespace Tessera
 
@@ -188,6 +194,9 @@ def apply (t : Term cs w h) : Op cs → Term cs w h
         (em.wellFormed_cells g t.style)
       cursor := (t.cursor.1 + em.width g.char, t.cursor.2) }
   | .title _ => t
+  | .enterInline _ => t
+  | .leaveInline _ => t
+  | .image _ _ => t
 
 def exec (t : Term cs w h) (ops : List (Op cs)) : Term cs w h := ops.foldl (apply em) t
 

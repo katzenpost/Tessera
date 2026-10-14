@@ -176,6 +176,105 @@ def glyphs (t : Text cs o) : List (Glyph cs) := cs.glyphs t.text
 /-- How many cells `t` takes. -/
 def width (t : Text cs o) : Nat := cs.textWidth t.text
 
+theorem foldl_width_add (l : List Char) (k : Nat) :
+    l.foldl (fun n c => n + if cs.Printable c then cs.width c else 0) k =
+      k + l.foldl (fun n c => n + if cs.Printable c then cs.width c else 0) 0 := by
+  induction l generalizing k with
+  | nil => simp
+  | cons c t ih => simp only [List.foldl_cons]; rw [ih, ih (0 + _)]; omega
+
+@[simp] theorem width_empty : (empty : Text cs o).width = 0 := by
+  simp [width, empty, Charset.textWidth, String.foldl_eq_foldl_toList]
+
+theorem width_append (a b : Text cs o) : (a ++ b).width = a.width + b.width := by
+  simp only [width, Charset.textWidth, text_append, String.foldl_eq_foldl_toList,
+    String.toList_append, List.foldl_append]
+  rw [foldl_width_add]
+
+/-- A space, as text of any origin. -/
+def space : Text cs o := ⟨" ", by simp [cs.printable_of_ascii], rfl⟩
+
+/-- Characters `l` of a text of origin `o`, as one, if they may be. -/
+private def ofChars? (l : List Char) : Option (Text cs o) :=
+  if h : (∀ c ∈ l, cs.Printable c ∨ Combining c) ∧ marksOk none l = true then
+    some ⟨String.ofList l, by simpa using h.1, by simpa using h.2⟩
+  else none
+
+/-- `l` cut into characters, each with the combining accents after it. -/
+def graphemeChars (acc : List (List Char)) (cur : List Char) : List Char → List (List Char)
+  | [] => (if cur.isEmpty then acc else cur.reverse :: acc).reverse
+  | c :: r =>
+    if isCombining c && !cur.isEmpty then graphemeChars acc (c :: cur) r
+    else graphemeChars (if cur.isEmpty then acc else cur.reverse :: acc) [c] r
+
+/-- The characters of `t`, each with its combining accents, as texts. -/
+def graphemes (t : Text cs o) : List (Text cs o) :=
+  (graphemeChars [] [] t.text.toList).filterMap ofChars?
+
+/-- Text at most `n` cells wide, and how wide it is. -/
+structure Fits (cs : Charset) (o : Origin) (n : Nat) where
+  text : Text cs o
+  used : Nat
+  used_eq : text.width = used
+  le : used ≤ n
+
+namespace Fits
+
+variable {n : Nat}
+
+def empty : Fits cs o n := ⟨.empty, 0, by simp, Nat.zero_le _⟩
+
+theorem width_le (l : Fits cs o n) : l.text.width ≤ n := l.used_eq ▸ l.le
+
+/-- `a` then `b`, if that fits. -/
+def push? (a : Fits cs o n) (b : Text cs o) : Option (Fits cs o n) :=
+  let bw := b.width
+  if h : a.used + bw ≤ n then
+    some ⟨a.text ++ b, a.used + bw, by rw [width_append, a.used_eq], h⟩
+  else none
+
+/-- `gs` added to the line `cur` and to new lines after it, one by one. One wider than a line
+is left out. -/
+def breakInto (lines : List (Fits cs o n)) (cur : Fits cs o n) (gs : List (Text cs o)) :
+    List (Fits cs o n) × Fits cs o n :=
+  gs.foldl (init := (lines, cur)) fun (lines, cur) g =>
+    match cur.push? g with
+    | some c => (lines, c)
+    | none =>
+      match empty.push? g with
+      | some c => (cur :: lines, c)
+      | none => (lines, cur)
+
+end Fits
+
+/-- `gs` cut into words at spaces. -/
+def words (gs : List (Text cs o)) : List (List (Text cs o)) :=
+  let (ws, cur) := gs.foldl (init := (([] : List (List (Text cs o))), ([] : List (Text cs o))))
+    fun (ws, cur) g => if g.text == " " then (cur.reverse :: ws, []) else (ws, g :: cur)
+  (cur.reverse :: ws).reverse
+
+/-- `t` broken into lines of at most `width` cells, at spaces where it can and inside words
+longer than a line. Each line is made of whole characters of `t`, each with its accents. -/
+def wrap (t : Text cs o) (width : Nat) : List (Fits cs o width) :=
+  if width = 0 then [] else
+  let (lines, cur) := (words t.graphemes).foldl (init := (([] : List (Fits cs o width)), Fits.empty))
+    fun (lines, cur) w =>
+      let word := w.foldl (· ++ ·) Text.empty
+      let fresh := fun (lines : List (Fits cs o width)) =>
+        match Fits.empty.push? word with
+        | some c => (lines, c)
+        | none => Fits.breakInto lines .empty w
+      if cur.used = 0 ∧ cur.text.text.isEmpty then fresh lines
+      else
+        match (cur.push? space).bind (·.push? word) with
+        | some c => (lines, c)
+        | none => fresh (cur :: lines)
+  (cur :: lines).reverse
+
+/-- Every line of `wrap t n` is at most `n` cells wide. -/
+theorem wrap_width_le (t : Text cs o) (n : Nat) : ∀ l ∈ t.wrap n, l.text.width ≤ n :=
+  fun l _ => l.width_le
+
 end Text
 
 /-- `t!"…"` is text the program wrote, from a literal checked when it compiles: for a charset

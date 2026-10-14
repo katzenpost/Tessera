@@ -22,6 +22,24 @@ def sgrTests : TestM Unit := do
   checkEq "all attributes" "\x1b[0;1;2;3;4;7m"
     (Ansi.sgr { bold := true, dim := true, italic := true, underline := true, reverse := true })
   checkEq "move" "\x1b[3;5H" (Ansi.moveTo 4 2)
+  let inl := Ansi.Placement.inline 3
+  checkEq "inline move" "\x1b8\x1b[2B\x1b[3C" (Ansi.encode (cs := CS) [.moveTo 3 2] inl)
+  checkEq "inline move home" "\x1b8" (Ansi.encode (cs := CS) [.moveTo 0 0] inl)
+  checkEq "inline clear" "\x1b8\x1b[J" (Ansi.encode (cs := CS) [.clear] inl)
+  checkEq "enter inline" "\r\n\n\x1b[2A\x1b7" (Ansi.encode (cs := CS) [.enterInline 3] inl)
+  checkEq "enter inline one row" "\r\x1b7" (Ansi.encode (cs := CS) [.enterInline 1] inl)
+  checkEq "leave inline" "\x1b8\x1b[2B\r\n" (Ansi.encode (cs := CS) [.leaveInline 3] inl)
+  let verified : Style := { fg := some .brightGreen, bold := true }
+  check "no colour keeps a reserved style reserved" (verified.downgrade .none).reserved
+  checkEq "no colour" (Ansi.sgr { bold := true, reverse := true }) (Ansi.sgr (verified.downgrade .none))
+  checkEq "basic colours stay" (Ansi.sgr (Style.fgOf .red)) (Ansi.sgr ((Style.fgOf .red).downgrade .ansi16))
+  checkEq "no colour drops a basic colour" (Ansi.sgr { bold := true })
+    (Ansi.sgr (({ fg := some .red, bold := true } : Style).downgrade .none))
+  checkEq "rgb to 256" "\x1b[0;38;5;196m" (Ansi.sgr ((Style.fgOf (.rgb 255 0 0)).downgrade .ansi256))
+  checkEq "rgb grey to 256" "\x1b[0;38;5;244m" (Ansi.sgr ((Style.fgOf (.rgb 128 128 128)).downgrade .ansi256))
+  checkEq "rgb to 16" "\x1b[0;91m" (Ansi.sgr ((Style.fgOf (.rgb 255 0 0)).downgrade .ansi16))
+  checkEq "indexed to 16" "\x1b[0;91m" (Ansi.sgr ((Style.fgOf (.indexed 196)).downgrade .ansi16))
+  checkEq "truecolor keeps rgb" "\x1b[0;38;2;1;2;3m" (Ansi.sgr ((Style.fgOf (.rgb 1 2 3)).downgrade .truecolor))
   check "over keeps base color" ((Style.fgOf .red).over (Style.bgOf .blue) ==
     { fg := some .red, bg := some .blue })
   check "over replaces color" ((Style.fgOf .red).over (Style.fgOf .blue) == Style.fgOf .red)
@@ -50,11 +68,11 @@ def bufferTests : TestM Unit := do
   check "outside reads blank" (b.get 9 9 == default)
   check "no glyph from a control character" ((Glyph.ofChar? '\x1b' : Option (Glyph CS)).isNone)
 
-def randomBuffer (w h : Nat) (r : Rng) : Buffer CS w h × Rng := Id.run do
+def randomBuffer {cs : Charset} (w h : Nat) (r : Rng) : Buffer cs w h × Rng := Id.run do
   let styles : Array Style := #[{}, Style.fgOf .red, { bold := true, bg := some (.indexed 17) },
     Style.fgOf (.rgb 1 2 3)]
-  let chars := #['a', 'b', ' ', '漢', '🦀', 'é']
-  let mut b : Buffer CS w h := Buffer.blank w h
+  let chars := #['a', 'b', ' ', '漢', '🦀', 'é', '·', '→']
+  let mut b : Buffer cs w h := Buffer.blank w h
   let mut r := r
   let (n, r1) := r.next 12
   r := r1
@@ -69,8 +87,26 @@ def randomBuffer (w h : Nat) (r : Rng) : Buffer CS w h × Rng := Id.run do
       let (ci, r') := r.next chars.size
       r := r'
       s := s.push chars[ci]!
-    b := (b.putString x y (gl s) styles[si]!).1
+    b := (b.putString x y (cs.glyphs s) styles[si]!).1
   return (b, r)
+
+/-- Random frames, each drawn over the last, show as they are, on the whole screen and inline. -/
+def randomDiffs (cs : Charset) (name : String) : TestM Unit := do
+  let mut rng : Rng := ⟨42⟩
+  let mut agree := 0
+  let inl := Ansi.Placement.inline 4
+  for _ in [0:300] do
+    let (old, r1) := randomBuffer (cs := cs) 9 4 rng
+    let (new, r2) := randomBuffer (cs := cs) 9 4 r1
+    rng := r2
+    let shown := (Terminal.showing old |>.run (diff old new)).screen
+    let inline := (Terminal.new 9 4 |>.run (Ansi.encode (cs := cs) [.enterInline 4] inl ++
+      redraw old inl ++ diff old new inl)).screen
+    if shown == new && inline == new then agree := agree + 1
+    else check s!"{name}: diff reproduces the new buffer" false fun _ =>
+      s!"{old.lines} → {new.lines}, shown {shown.lines}, inline {inline.lines}"
+  checkEq s!"{name}: random diffs reproduce the new buffer" 300 agree
+
 
 def diffTests : TestM Unit := do
   let (b, _) := (Buffer.blank (cs := CS) 6 2).putString 1 1 (gl "hi")
@@ -83,15 +119,7 @@ def diffTests : TestM Unit := do
   checkEq "a style change" ("\x1b[2;2H\x1b[0;31mhi\x1b[0m") (diff b b4)
   check "a redraw clears first" ((redraw b).startsWith (Ansi.resetStyle ++ Ansi.clearScreen))
   check "first frame shows the buffer" ((Terminal.new 6 2 |>.run (redraw b)).screen == b)
-  let mut rng : Rng := ⟨42⟩
-  let mut agree := 0
-  for _ in [0:300] do
-    let (old, r1) := randomBuffer 9 4 rng
-    let (new, r2) := randomBuffer 9 4 r1
-    rng := r2
-    let shown := (Terminal.showing old |>.run (diff old new)).screen
-    if shown == new then agree := agree + 1
-    else check "diff reproduces the new buffer" false fun _ => s!"{old.lines} → {new.lines}, shown {shown.lines}"
-  checkEq "random diffs reproduce the new buffer" 300 agree
+  randomDiffs Charset.standard "standard"
+  randomDiffs Charset.cjk "cjk"
 
 end Tessera.Tests.Draw

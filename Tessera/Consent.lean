@@ -50,6 +50,11 @@ structure Confirmation (cs : Charset) where
 def Confirmation.ask (_ : UserInput) (consequence : Text cs .app) (now : Nat) : Confirmation cs :=
   ⟨consequence, now⟩
 
+/-- `c` when the window regains the focus at `now`: the delay starts again, so a key pressed by
+someone just back at the window does not answer a question they have not seen. -/
+def Confirmation.refocus (c : Confirmation cs) (now : Nat) : Confirmation cs :=
+  ⟨c.consequence, max c.shownAt now⟩
+
 /-- The user confirmed `c`. -/
 structure Confirmed (c : Confirmation cs) : Type where
   private mk ::
@@ -78,6 +83,13 @@ theorem answer_early {ε : Type} (c : Confirmation cs) (k : Key) (m : Modifiers)
     (now : Nat) (h : now < c.shownAt + confirmDelayMs) :
     c.answer (ε := ε) (.key k m u) now = none := by
   simp [Confirmation.answer]; omega
+
+/-- After the window regains the focus, a key pressed before the delay has passed again does not
+confirm. -/
+theorem answer_refocus {ε : Type} (c : Confirmation cs) (k : Key) (m : Modifiers) (u : UserInput)
+    (back now : Nat) (h : now < back + confirmDelayMs) :
+    (c.refocus back).answer (ε := ε) (.key k m u) now = none :=
+  answer_early _ k m u now (by simp only [Confirmation.refocus]; omega)
 
 /-! ## Links -/
 
