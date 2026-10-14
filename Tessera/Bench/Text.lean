@@ -40,6 +40,9 @@ def benches : IO (Array LeanBench.Bench) := do
                       action := do out.set (Untrusted.line (cs := CS) (← s.get)).text }
       bs := bs.push { name := s!"tokens {kind} {label}", config := cfg,
                       action := do toks.set (VT.tokens (← s.get).toList).length }
+      let t ← IO.mkRef (Untrusted.line (cs := CS) (sample pattern size))
+      bs := bs.push { name := s!"wrap {kind} {label}", config := cfg,
+                      action := do toks.set ((← t.get).wrap 80).length }
     let s ← IO.mkRef (sample "one line of a message\n" size)
     bs := bs.push { name := s!"lines {label}", config := cfg,
                     action := do out.set (toString (Untrusted.lines (cs := CS) (← s.get)).val.length) }

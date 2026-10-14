@@ -67,37 +67,12 @@ instance : Shows .remote .remote := ⟨⟩
 
 instance : Inhabited (Widget cs o) := ⟨{ render := fun _ => .empty }⟩
 
-/-- The longest prefix of `s` that fits in `width` cells. -/
-def truncate (cs : Charset) (width : Nat) (s : String) : String :=
-  (s.foldl (init := ("", 0)) fun (acc, n) c =>
-    let cw := cs.textWidth (String.singleton c)
-    if n + cw ≤ width then (acc.push c, n + cw) else (acc, width + 1)).1
-
-/-- Break `s` into lines of at most `width` cells, at spaces where it can and inside words
-longer than a line. -/
-def wrap (cs : Charset) (width : Nat) (s : String) : List String :=
-  if width == 0 then [] else (s.splitOn "\n").flatMap paragraph
-where
-  paragraph (p : String) : List String :=
-    let (lines, cur) := (p.splitOn " ").foldl (init := (([] : List String), "")) fun (lines, cur) word =>
-      let joined := if cur.isEmpty then word else cur ++ " " ++ word
-      if cs.textWidth joined ≤ width then (lines, joined)
-      else
-        let lines := if cur.isEmpty then lines else cur :: lines
-        breakWord lines word
-    (cur :: lines).reverse
-  /-- Lines of a word too long for one, and what is left of it. -/
-  breakWord (lines : List String) (word : String) : List String × String :=
-    word.foldl (init := (lines, "")) fun (lines, cur) c =>
-      if cs.textWidth (cur.push c) ≤ width then (lines, cur.push c)
-      else (cur :: lines, String.singleton c)
-
 /-- `lines` drawn one per row, in a buffer `width` wide. -/
-private def linesImage (ctx : Context) (lines : List String) (width : Nat) (hw : width ≤ ctx.width)
-    (hh : lines.length ≤ ctx.height) : Image cs ctx.width ctx.height :=
+private def linesImage {t : Origin} (ctx : Context) (lines : List (Text cs t)) (width : Nat)
+    (hw : width ≤ ctx.width) (hh : lines.length ≤ ctx.height) : Image cs ctx.width ctx.height :=
   ⟨width, lines.length, hw, hh,
     lines.zipIdx.foldl (init := Buffer.blank width lines.length ctx.style) fun b (l, y) =>
-      (b.putString 0 y (cs.glyphs l) ctx.style).1⟩
+      (b.putString 0 y l.glyphs ctx.style).1⟩
 
 namespace Widget
 
@@ -118,8 +93,8 @@ instance : Coe (Widget cs .app) (Widget cs .remote) := ⟨lift⟩
 /-- Lines of text, one per row, clipped to the space given. -/
 def strs {t : Origin} [Shows t o] (ts : List (Text cs t)) : Widget cs o where
   render ctx :=
-    let lines := (ts.map (·.text)).take ctx.height
-    linesImage ctx lines (min ctx.width (lines.foldl (fun n l => max n (cs.textWidth l)) 0))
+    let lines := ts.take ctx.height
+    linesImage ctx lines (min ctx.width (lines.foldl (fun n l => max n l.width) 0))
       (Nat.min_le_left _ _) (by simp [lines]; omega)
 
 /-- One line of text, clipped to the space given. -/
@@ -129,7 +104,7 @@ def str {t : Origin} [Shows t o] (s : Text cs t) : Widget cs o := strs [s]
 def txt {t : Origin} [Shows t o] (s : Text cs t) : Widget cs o where
   hPolicy := .greedy
   render ctx :=
-    let lines := (wrap cs ctx.width s.text).take ctx.height
+    let lines := ((s.wrap ctx.width).map (·.text)).take ctx.height
     linesImage ctx lines ctx.width (Nat.le_refl _) (by simp [lines]; omega)
 
 /-- All the space given, filled with `c`, or blank if `cs` does not allow it. -/
@@ -306,7 +281,7 @@ def borderWithLabel {t : Origin} [Shows t o] (label : Text cs t) (w : Widget cs 
         let b := put b 0 (bh - 1) ("└" ++ horizontal ++ "┘")
         let b := (List.range inner.h).foldl (init := b) fun b y =>
           put (put b 0 (y + 1) "│") (bw - 1) (y + 1) "│"
-        let b := put b 1 0 (truncate cs inner.w label.text)
+        let b := (b.putString 1 0 (label.truncate inner.w).glyphs ctx.style).1
         ⟨bw, bh, by omega, by omega, b.blit 1 1 inner.buf⟩ }
 
 def border (w : Widget cs o) : Widget cs o := borderWithLabel (t := .app) .empty w
