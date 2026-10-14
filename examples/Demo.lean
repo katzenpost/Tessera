@@ -9,7 +9,8 @@ import Tessera
 
 A list to move through with the arrow keys, the mouse wheel or a click, a line to type into, and a counter that a
 background task advances through the application's own events. Enter adds the typed line to the
-list; Esc or Ctrl+C quits. -/
+list; Esc or Ctrl+C quits. With `--inline`, it is drawn in 14 rows below the cursor, not on the
+whole screen. -/
 
 open Tessera Widget Untrusted
 
@@ -22,6 +23,7 @@ structure State where
   input : Input CS := {}
   /-- Rows of the list on screen, for paging: the screen's height less the frame around it. -/
   rows : Nat := 10
+  placement : Ansi.Placement := .fullscreen
   beats : Nat := 0
 
 def draw (s : State) : W :=
@@ -46,7 +48,7 @@ def update (m : Msg Unit) (s : State) : IO (State × Bool) :=
     if column < 28 && row ≥ 1 then pure ({ s with items := s.items.click (row - 1) s.rows }, false)
     else pure (s, false)
   | .mouse .. => pure ({ s with items := s.items.update m s.rows }, false)
-  | .resize _ h => pure ({ s with rows := h - 6 }, false)
+  | .resize _ h => pure ({ s with rows := s.placement.height h - 6 }, false)
   | .custom () => pure ({ s with beats := s.beats + 1 }, false)
   | m =>
     let (input, sent) := s.input.update m
@@ -55,12 +57,14 @@ def update (m : Msg Unit) (s : State) : IO (State × Bool) :=
       | none => s.items
     pure ({ s with input, items }, false)
 
-def main : IO Unit := do
+def main (args : List String) : IO Unit := do
+  let placement : Ansi.Placement := if args.contains "--inline" then .inline 14 else .fullscreen
   let stop ← IO.mkRef false
   let items := #["apples", "bread", "cheese", "dates", "eggs", "figs", "grapes", "honey",
     "ice cream", "jam", "kale", "lemons", "mangoes", "nuts", "olives", "pears"].map (Untrusted.line ·)
-  let rows := (← CrosstermFfi.size).2.toNat - 6
-  let final ← App.run { draw, update, mouse := true } { items := { items }, rows } fun post => do
+  let rows := placement.height (← CrosstermFfi.size).2.toNat - 6
+  let final ← App.run (placement := placement) { draw, update, mouse := placement == .fullscreen }
+    { items := { items }, rows, placement } fun post => do
     discard <| IO.asTask (prio := .dedicated) do
       while !(← stop.get) do
         IO.sleep 1000

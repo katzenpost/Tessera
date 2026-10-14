@@ -8,13 +8,18 @@ import Tessera.VT
 
 /-! # What Tessera writes to the terminal
 
-Everything Tessera writes is an `Op`: move the cursor, set the style, clear the screen, or print
-a glyph. Text reaches the terminal only as glyphs, each a character its charset allows, and no
+Everything Tessera writes is an `Op`: move the cursor, set the style, clear the screen, print a
+glyph, set the title, or make room for an inline frame and leave it. Text reaches the terminal only as glyphs, each a character its charset allows, and no
 operation places text inside an escape sequence or asks the terminal a question.
 
+A frame is drawn either on the whole screen or inline, in rows below the cursor, with the
+terminal's scrollback left as it was. Inline, positions are relative to the frame's first row,
+which the terminal is asked to remember (ESC 7), so a move is a return there (ESC 8) and moves
+down and right, and clearing clears from there down.
+
 `output_only_own` says what a terminal makes of the output: read with `VT.tokens`, the encoding
-of a list of operations gives back exactly those operations, each a printed character or one of
-Tessera's own control sequences. -/
+of a list of operations gives back exactly the tokens of those operations, each a printed
+character or one of Tessera's own controls and sequences. -/
 
 namespace Tessera.Ansi
 
@@ -52,6 +57,17 @@ def sgr (s : Style) : String := csi (sgrCodes s) 'm'
 
 def resetStyle : String := sgr {}
 
+/-- Where frames are drawn: on the whole screen, or inline, in `rows` rows from the cursor. -/
+inductive Placement where
+  | fullscreen
+  | inline (rows : Nat)
+  deriving DecidableEq, Repr, Inhabited
+
+/-- How many rows a frame has on a screen `h` rows high. -/
+def Placement.height : Placement → Nat → Nat
+  | .fullscreen, h => h
+  | .inline n, h => min n h
+
 inductive Op (cs : Charset) where
   | moveTo (x y : Nat)
   | sgr (s : Style)
@@ -59,33 +75,62 @@ inductive Op (cs : Charset) where
   | print (g : Glyph cs)
   /-- Set the window's title, to text the program wrote. -/
   | title (t : Text cs .app)
+  /-- Make room for an inline frame of `rows` rows from the cursor, scrolling if need be, and
+  remember where it starts. -/
+  | enterInline (rows : Nat)
+  /-- Put the cursor on the line after an inline frame of `rows` rows. -/
+  | leaveInline (rows : Nat)
 
 variable {cs : Charset}
 
-def Op.chars : Op cs → List Char
-  | .moveTo x y => csiChars [y + 1, x + 1] 'H'
+/-- Move `n` (`f`: `A` up, `B` down, `C` right), or not at all. -/
+def relChars (n : Nat) (f : Char) : List Char := if n = 0 then [] else csiChars [n] f
+
+def relTokens (n : Nat) (f : Char) : List Token := if n = 0 then [] else [.csi (paramChars [n]) [] f]
+
+def Op.chars (p : Placement) : Op cs → List Char
+  | .moveTo x y => match p with
+    | .fullscreen => csiChars [y + 1, x + 1] 'H'
+    | .inline _ => '\x1b' :: '8' :: (relChars y 'B' ++ relChars x 'C')
   | .sgr s => csiChars (sgrCodes s) 'm'
-  | .clear => csiChars [2] 'J'
+  | .clear => match p with
+    | .fullscreen => csiChars [2] 'J'
+    | .inline _ => '\x1b' :: '8' :: csiChars [] 'J'
   | .print g => [g.char]
   | .title t => '\x1b' :: ']' :: '0' :: ';' :: (t.text.toList ++ ['\x07'])
+  | .enterInline n =>
+    '\r' :: (List.replicate (n - 1) '\n' ++ relChars (n - 1) 'A' ++ ['\x1b', '7'])
+  | .leaveInline n => '\x1b' :: '8' :: (relChars (n - 1) 'B' ++ ['\r', '\n'])
 
 /-- What a terminal makes of an operation. -/
-def Op.token : Op cs → Token
-  | .moveTo x y => .csi (paramChars [y + 1, x + 1]) [] 'H'
-  | .sgr s => .csi (paramChars (sgrCodes s)) [] 'm'
-  | .clear => .csi (paramChars [2]) [] 'J'
-  | .print g => .print g.char
-  | .title t => .osc ('0' :: ';' :: t.text.toList)
+def Op.tokens (p : Placement) : Op cs → List Token
+  | .moveTo x y => match p with
+    | .fullscreen => [.csi (paramChars [y + 1, x + 1]) [] 'H']
+    | .inline _ => .esc [] '8' :: (relTokens y 'B' ++ relTokens x 'C')
+  | .sgr s => [.csi (paramChars (sgrCodes s)) [] 'm']
+  | .clear => match p with
+    | .fullscreen => [.csi (paramChars [2]) [] 'J']
+    | .inline _ => [.esc [] '8', .csi [] [] 'J']
+  | .print g => [.print g.char]
+  | .title t => [.osc ('0' :: ';' :: t.text.toList)]
+  | .enterInline n =>
+    .control '\r' :: (List.replicate (n - 1) (.control '\n') ++ relTokens (n - 1) 'A' ++ [.esc [] '7'])
+  | .leaveInline n => .esc [] '8' :: (relTokens (n - 1) 'B' ++ [.control '\r', .control '\n'])
 
-def encode (ops : List (Op cs)) : String := String.ofList (ops.flatMap Op.chars)
+def encode (ops : List (Op cs)) (p : Placement := .fullscreen) : String :=
+  String.ofList (ops.flatMap (Op.chars p))
 
 /-- The tokens of Tessera's own output: a character that only prints; one of its control
-sequences, moving the cursor (`H`), setting the style (`m`) or clearing the screen (`J`); or the
-command setting the window's title, to characters that only print. -/
+sequences, moving the cursor (`H`, or `A`, `B` and `C` by a number of cells), setting the style
+(`m`) or clearing the screen (`J`); remembering the cursor's place (ESC 7) and returning to it
+(ESC 8); a carriage return and a line feed; or the command setting the window's title, to
+characters that only print. -/
 def Own : Token → Prop
   | .print c => Inert c
-  | .csi ps [] f => (∀ p ∈ ps, isParam p) ∧ (f = 'H' ∨ f = 'm' ∨ f = 'J')
+  | .csi ps [] f => (∀ p ∈ ps, isParam p) ∧ f ∈ ['H', 'm', 'J', 'A', 'B', 'C']
   | .osc ('0' :: ';' :: t) => ∀ c ∈ t, Inert c
+  | .esc [] f => f = '7' ∨ f = '8'
+  | .control c => c = '\r' ∨ c = '\n'
   | _ => False
 
 theorem isParam_of_isDigit {c : Char} (h : c.isDigit) : isParam c := by
@@ -110,20 +155,54 @@ theorem paramChars_param (ns : List Nat) : ∀ p ∈ paramChars ns, isParam p :=
       · decide
       · exact ih p (by simpa [paramChars] using hp)
 
-theorem run_op (op : Op cs) (rest : List Char) :
-    run .ground (op.chars ++ rest) = op.token :: run .ground rest := by
-  have csiOp : ∀ (ns : List Nat) (f : Char), isFinal f →
-      run .ground (csiChars ns f ++ rest) = .csi (paramChars ns) [] f :: run .ground rest :=
-    fun ns f hf => by
-      simpa [csiChars] using run_csi (paramChars_param ns) hf rest
+theorem run_esc {f : Char} (hf : f = '7' ∨ f = '8') (rest : List Char) :
+    run .ground ('\x1b' :: f :: rest) = .esc [] f :: run .ground rest := by
+  rcases hf with rfl | rfl <;> rfl
+
+theorem run_control {c : Char} (hc : c = '\r' ∨ c = '\n') (rest : List Char) :
+    run .ground (c :: rest) = .control c :: run .ground rest := by
+  rcases hc with rfl | rfl <;> rfl
+
+theorem run_csiOf (ns : List Nat) {f : Char} (hf : isFinal f) (rest : List Char) :
+    run .ground (csiChars ns f ++ rest) = .csi (paramChars ns) [] f :: run .ground rest := by
+  simpa [csiChars] using run_csi (paramChars_param ns) hf rest
+
+theorem run_rel (n : Nat) {f : Char} (hf : isFinal f) (rest : List Char) :
+    run .ground (relChars n f ++ rest) = relTokens n f ++ run .ground rest := by
+  unfold relChars relTokens
+  split
+  · rfl
+  · simpa using run_csiOf [n] hf rest
+
+theorem run_lf (n : Nat) (rest : List Char) :
+    run .ground (List.replicate n '\n' ++ rest) =
+      List.replicate n (.control '\n') ++ run .ground rest := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    rw [List.replicate_succ, List.cons_append, run_control (.inr rfl), ih]; rfl
+
+theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
+    run .ground (op.chars p ++ rest) = op.tokens p ++ run .ground rest := by
   cases op with
-  | moveTo x y => exact csiOp _ _ (by decide)
-  | sgr s => exact csiOp _ _ (by decide)
-  | clear => exact csiOp _ _ (by decide)
+  | moveTo x y =>
+    cases p with
+    | fullscreen => simpa [Op.chars, Op.tokens] using run_csiOf [y + 1, x + 1] (f := 'H') (by decide) rest
+    | inline _ =>
+      simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
+      rw [run_esc (.inr rfl), run_rel _ (by decide), run_rel _ (by decide)]
+  | sgr s => simpa [Op.chars, Op.tokens] using run_csiOf (sgrCodes s) (f := 'm') (by decide) rest
+  | clear =>
+    cases p with
+    | fullscreen => simpa [Op.chars, Op.tokens] using run_csiOf [2] (f := 'J') (by decide) rest
+    | inline _ =>
+      simp only [Op.chars, Op.tokens, List.cons_append]
+      rw [run_esc (.inr rfl), run_csiOf [] (f := 'J') (by decide)]
+      rfl
   | print g =>
     have := run_inert (l := [g.char])
       (fun c hc => by simp at hc; subst hc; exact inert_of_text (.inl g.printable)) rest
-    simpa [Op.chars, Op.token] using this
+    simpa [Op.chars, Op.tokens] using this
   | title t =>
     have hb : ∀ c ∈ '0' :: ';' :: t.text.toList, Inert c := by
       intro c hc
@@ -132,29 +211,77 @@ theorem run_op (op : Op cs) (rest : List Char) :
       · exact ⟨by decide, by decide, by decide⟩
       · exact ⟨by decide, by decide, by decide⟩
       · exact inert_of_text (t.charsOk c hc)
-    simpa [Op.chars, Op.token] using run_osc hb rest
+    simpa [Op.chars, Op.tokens] using run_osc hb rest
+  | enterInline n =>
+    simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
+    rw [run_control (.inl rfl), run_lf, run_rel _ (by decide), run_esc (.inl rfl)]
+    simp
+  | leaveInline n =>
+    simp only [Op.chars, Op.tokens, List.cons_append, List.append_assoc]
+    rw [run_esc (.inr rfl), run_rel _ (by decide), run_control (.inl rfl), run_control (.inr rfl)]
+    simp
 
-/-- A terminal reads Tessera's output as exactly the operations it encodes. -/
-theorem output_only_own (ops : List (Op cs)) : tokens (encode ops).toList = ops.map Op.token := by
+/-- A terminal reads Tessera's output as exactly the tokens of the operations it encodes. -/
+theorem output_only_own (ops : List (Op cs)) (p : Placement := .fullscreen) :
+    tokens (encode ops p).toList = ops.flatMap (Op.tokens p) := by
   simp only [encode, String.toList_ofList, tokens]
   induction ops with
   | nil => rfl
-  | cons op ops ih => rw [List.flatMap_cons, run_op, ih]; rfl
+  | cons op ops ih => simp only [List.flatMap_cons]; rw [run_op, ih]
 
-theorem own_token (op : Op cs) : Own op.token := by
+theorem own_rel (n : Nat) {f : Char} (hf : f ∈ ['H', 'm', 'J', 'A', 'B', 'C']) :
+    ∀ t ∈ relTokens n f, Own t := by
+  unfold relTokens; split
+  · simp
+  · simp only [List.mem_singleton]; rintro t rfl; exact ⟨paramChars_param _, hf⟩
+
+theorem own_tokens (p : Placement) (op : Op cs) : ∀ t ∈ op.tokens p, Own t := by
   cases op with
-  | moveTo => exact ⟨paramChars_param _, .inl rfl⟩
-  | sgr => exact ⟨paramChars_param _, .inr (.inl rfl)⟩
-  | clear => exact ⟨paramChars_param _, .inr (.inr rfl)⟩
-  | print g => exact inert_of_text (.inl g.printable)
-  | title t => exact fun c hc => inert_of_text (t.charsOk c hc)
+  | moveTo =>
+    cases p with
+    | fullscreen => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact ⟨paramChars_param _, by simp⟩
+    | inline _ =>
+      simp only [Op.tokens, List.mem_cons, List.mem_append]
+      rintro t (rfl | h | h)
+      · exact .inr rfl
+      · exact own_rel _ (by simp) t h
+      · exact own_rel _ (by simp) t h
+  | sgr => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact ⟨paramChars_param _, by simp⟩
+  | clear =>
+    cases p with
+    | fullscreen => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact ⟨paramChars_param _, by simp⟩
+    | inline _ =>
+      simp only [Op.tokens, List.mem_cons, List.not_mem_nil, or_false]
+      rintro t (rfl | rfl)
+      · exact .inr rfl
+      · exact ⟨by simp, by simp⟩
+  | print g => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact inert_of_text (.inl g.printable)
+  | title t => simp only [Op.tokens, List.mem_singleton]; rintro t' rfl; exact fun c hc => inert_of_text (t.charsOk c hc)
+  | enterInline n =>
+    intro t ht
+    simp only [Op.tokens, List.mem_cons, List.mem_append, List.mem_replicate, List.not_mem_nil,
+      or_false] at ht
+    rcases ht with rfl | (⟨_, rfl⟩ | h) | rfl
+    · exact .inl rfl
+    · exact .inr rfl
+    · exact own_rel _ (by simp) t h
+    · exact .inl rfl
+  | leaveInline n =>
+    intro t ht
+    simp only [Op.tokens, List.mem_cons, List.mem_append, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | h | rfl | rfl
+    · exact .inr rfl
+    · exact own_rel _ (by simp) t h
+    · exact .inl rfl
+    · exact .inr rfl
 
 /-- Every token of Tessera's output is its own: a character that only prints, or one of its
-control sequences. -/
-theorem output_own (ops : List (Op cs)) : ∀ t ∈ tokens (encode ops).toList, Own t := by
-  rw [output_only_own]
+controls and sequences. -/
+theorem output_own (ops : List (Op cs)) (p : Placement := .fullscreen) :
+    ∀ t ∈ tokens (encode ops p).toList, Own t := by
+  rw [output_only_own ops p]
   intro t ht
-  obtain ⟨op, _, rfl⟩ := List.mem_map.mp ht
-  exact own_token op
+  obtain ⟨op, _, ht⟩ := List.mem_flatMap.mp ht
+  exact own_tokens p op t ht
 
 end Tessera.Ansi

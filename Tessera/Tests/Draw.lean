@@ -22,6 +22,13 @@ def sgrTests : TestM Unit := do
   checkEq "all attributes" "\x1b[0;1;2;3;4;7m"
     (Ansi.sgr { bold := true, dim := true, italic := true, underline := true, reverse := true })
   checkEq "move" "\x1b[3;5H" (Ansi.moveTo 4 2)
+  let inl := Ansi.Placement.inline 3
+  checkEq "inline move" "\x1b8\x1b[2B\x1b[3C" (Ansi.encode (cs := CS) [.moveTo 3 2] inl)
+  checkEq "inline move home" "\x1b8" (Ansi.encode (cs := CS) [.moveTo 0 0] inl)
+  checkEq "inline clear" "\x1b8\x1b[J" (Ansi.encode (cs := CS) [.clear] inl)
+  checkEq "enter inline" "\r\n\n\x1b[2A\x1b7" (Ansi.encode (cs := CS) [.enterInline 3] inl)
+  checkEq "enter inline one row" "\r\x1b7" (Ansi.encode (cs := CS) [.enterInline 1] inl)
+  checkEq "leave inline" "\x1b8\x1b[2B\r\n" (Ansi.encode (cs := CS) [.leaveInline 3] inl)
   let verified : Style := { fg := some .brightGreen, bold := true }
   check "no colour keeps a reserved style reserved" (verified.downgrade .none).reserved
   checkEq "no colour" (Ansi.sgr { bold := true, reverse := true }) (Ansi.sgr (verified.downgrade .none))

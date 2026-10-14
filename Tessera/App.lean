@@ -90,6 +90,8 @@ def Depth.detect : IO Depth := do
 structure Screen where
   size : IO (Nat × Nat)
   write : String → IO Unit
+  /-- Where frames are drawn on it. -/
+  placement : Ansi.Placement := .fullscreen
 
 namespace App
 
@@ -103,8 +105,9 @@ partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Inco
     (init : σ) (ready : IO (Option (Incoming ε)) := pure none) (depth : Depth := .truecolor) :
     IO σ := do
   let (w, h) ← screen.size
+  let h := screen.placement.height h
   let frame := render init w h
-  screen.write (redraw frame ++ titleOutput none (app.title init))
+  screen.write (redraw frame screen.placement ++ titleOutput none (app.title init))
   go init w h frame (app.title init)
 where
   /-- The frame for `s`, in the colours the terminal shows. -/
@@ -114,13 +117,14 @@ where
   /-- The title, written when it changes. -/
   titleOutput (shown new : Option (Text cs .app)) : String :=
     match new with
-    | some t => if shown.map (·.text) == some t.text then "" else Ansi.encode [.title t]
+    | some t =>
+      if shown.map (·.text) == some t.text then "" else Ansi.encode [.title t] screen.placement
     | none => ""
   /-- Update for one message: the new state, the screen's size, and whether to quit. -/
   step (s : σ) (w h : Nat) (i : Incoming ε) : IO (σ × Nat × Nat × Bool) := do
     let m := i.toMsg
     let (w, h) := match m with
-      | .resize w' h' => (w', h')
+      | .resize w' h' => (w', screen.placement.height h')
       | _ => (w, h)
     let (s, quit) ← app.update m s
     return (s, w, h, quit)
@@ -136,32 +140,40 @@ where
     let (s, w', h', quit) ← drain s w' h'
     if quit then return s
     let frame := render s w' h'
-    let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame
-      else redraw frame
+    let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame screen.placement
+      else redraw frame screen.placement
     screen.write (out ++ titleOutput title (app.title s))
     go s w' h' frame (app.title s)
 
-/-- The terminal, through crossterm and standard output. -/
-def terminal : IO Screen := do
+/-- The terminal, through crossterm and standard output, with frames placed by `placement`. -/
+def terminal (placement : Ansi.Placement := .fullscreen) : IO Screen := do
   let out ← IO.getStdout
   return {
+    placement
     size := do
       let (w, h) ← CrosstermFfi.size
       return (w.toNat, h.toNat)
     write := fun s => do out.putStr s; out.flush }
 
-/-- Run `app` from `init` in the terminal's alternate screen, in raw mode, in the colours the
-environment asks for (`Depth.detect`), and return its last state. `start` is called once with a function that sends the application one of its own events;
+/-- Run `app` from `init` in raw mode, in the colours the environment asks for (`Depth.detect`),
+and return its last state. Its frames fill the terminal's alternate screen, or, with
+`placement := .inline n`, take `n` rows from the cursor, leaving what is above them as it was and
+the cursor on the line after them when the application quits. `start` is called once with a function that sends the application one of its own events;
 it may keep that function and call it from other tasks. -/
-def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ()) :
-    IO σ := do
+def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ())
+    (placement : Ansi.Placement := .fullscreen) : IO σ := do
   let messages ← Std.CloseableChannel.new (α := Incoming ε)
   let send (m : Incoming ε) : IO Unit := discard <| messages.send m
   let stop ← IO.mkRef false
-  let screen ← terminal
+  let screen ← terminal placement
   let depth ← Depth.detect
+  let rows := match placement with
+    | .inline n => some n
+    | .fullscreen => none
   CrosstermFfi.enableRawMode
-  CrosstermFfi.enterAlternateScreen
+  match rows with
+  | some n => screen.write (Ansi.encode (cs := cs) [.enterInline n] placement)
+  | none => CrosstermFfi.enterAlternateScreen
   CrosstermFfi.hideCursor
   CrosstermFfi.enableBracketedPaste
   CrosstermFfi.enableFocusChange
@@ -188,7 +200,9 @@ def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit :
     CrosstermFfi.disableFocusChange
     CrosstermFfi.disableBracketedPaste
     CrosstermFfi.showCursor
-    CrosstermFfi.leaveAlternateScreen
+    match rows with
+    | some n => screen.write (Ansi.encode (cs := cs) [.sgr {}, .leaveInline n] placement)
+    | none => CrosstermFfi.leaveAlternateScreen
     CrosstermFfi.disableRawMode
 
 end App
