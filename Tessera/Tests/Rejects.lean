@@ -105,6 +105,10 @@ example : RemoteStyle := { reverse := true }
 #guard_msgs in
 example : UserInput := ⟨⟩
 
+/-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.UserInput` is marked as private -/
+#guard_msgs in
+example (e : MouseEvent) : Msg Unit := .mouse e ⟨⟩
+
 /-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.Designation` is marked as private -/
 #guard_msgs in
 example (u : Url) : Designation u := ⟨⟩

@@ -22,6 +22,17 @@ def sgrTests : TestM Unit := do
   checkEq "all attributes" "\x1b[0;1;2;3;4;7m"
     (Ansi.sgr { bold := true, dim := true, italic := true, underline := true, reverse := true })
   checkEq "move" "\x1b[3;5H" (Ansi.moveTo 4 2)
+  let verified : Style := { fg := some .brightGreen, bold := true }
+  check "no colour keeps a reserved style reserved" (verified.downgrade .none).reserved
+  checkEq "no colour" (Ansi.sgr { bold := true, reverse := true }) (Ansi.sgr (verified.downgrade .none))
+  checkEq "basic colours stay" (Ansi.sgr (Style.fgOf .red)) (Ansi.sgr ((Style.fgOf .red).downgrade .ansi16))
+  checkEq "no colour drops a basic colour" (Ansi.sgr { bold := true })
+    (Ansi.sgr (({ fg := some .red, bold := true } : Style).downgrade .none))
+  checkEq "rgb to 256" "\x1b[0;38;5;196m" (Ansi.sgr ((Style.fgOf (.rgb 255 0 0)).downgrade .ansi256))
+  checkEq "rgb grey to 256" "\x1b[0;38;5;244m" (Ansi.sgr ((Style.fgOf (.rgb 128 128 128)).downgrade .ansi256))
+  checkEq "rgb to 16" "\x1b[0;91m" (Ansi.sgr ((Style.fgOf (.rgb 255 0 0)).downgrade .ansi16))
+  checkEq "indexed to 16" "\x1b[0;91m" (Ansi.sgr ((Style.fgOf (.indexed 196)).downgrade .ansi16))
+  checkEq "truecolor keeps rgb" "\x1b[0;38;2;1;2;3m" (Ansi.sgr ((Style.fgOf (.rgb 1 2 3)).downgrade .truecolor))
   check "over keeps base color" ((Style.fgOf .red).over (Style.bgOf .blue) ==
     { fg := some .red, bg := some .blue })
   check "over replaces color" ((Style.fgOf .red).over (Style.fgOf .blue) == Style.fgOf .red)

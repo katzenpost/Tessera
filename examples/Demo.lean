@@ -7,7 +7,7 @@ import Tessera
 
 /-! # Tessera demo
 
-A list to move through with the arrow keys, a line to type into, and a counter that a
+A list to move through with the arrow keys, the mouse wheel or a click, a line to type into, and a counter that a
 background task advances through the application's own events. Enter adds the typed line to the
 list; Esc or Ctrl+C quits. -/
 
@@ -41,6 +41,11 @@ def update (m : Msg Unit) (s : State) : IO (State × Bool) :=
   | .key (.char 'c') { ctrl := true, .. } _ => pure (s, true)
   | .key .up _ _ | .key .down _ _ | .key .pageUp _ _ | .key .pageDown _ _ =>
     pure ({ s with items := s.items.update m s.rows }, false)
+  | .mouse { kind := .down .left, column, row, .. } _ =>
+    -- The list is drawn in a border from the second row, 28 cells wide.
+    if column < 28 && row ≥ 1 then pure ({ s with items := s.items.click (row - 1) s.rows }, false)
+    else pure (s, false)
+  | .mouse .. => pure ({ s with items := s.items.update m s.rows }, false)
   | .resize _ h => pure ({ s with rows := h - 6 }, false)
   | .custom () => pure ({ s with beats := s.beats + 1 }, false)
   | m =>
@@ -55,7 +60,7 @@ def main : IO Unit := do
   let items := #["apples", "bread", "cheese", "dates", "eggs", "figs", "grapes", "honey",
     "ice cream", "jam", "kale", "lemons", "mangoes", "nuts", "olives", "pears"].map (Untrusted.line ·)
   let rows := (← CrosstermFfi.size).2.toNat - 6
-  let final ← App.run { draw, update } { items := { items }, rows } fun post => do
+  let final ← App.run { draw, update, mouse := true } { items := { items }, rows } fun post => do
     discard <| IO.asTask (prio := .dedicated) do
       while !(← stop.get) do
         IO.sleep 1000

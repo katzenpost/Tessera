@@ -8,7 +8,7 @@ relaxedAutoImplicit = false
 [[require]]
 name = "crossterm-lean-ffi"
 git = "https://github.com/katzenpost/crossterm-lean-ffi"
-rev = "993b77125452a49fa2d56cef21c8a95e4f65ab17"
+rev = "9100ee25c372d1ade9d996c0e36aacd6d63b70ab"
 
 [[require]]
 name = "LeanBench"

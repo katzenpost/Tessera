@@ -117,6 +117,26 @@ theorem wellFormed_append {a b : List (Cell cs)} (ha : wellFormed a) (hb : wellF
       | .wideRight :: _, h => exact absurd rfl (h _)
     exact wellFormed_cons_narrow ha'.1 (ih ha'.2)
 
+/-- The cell drawn in `f` of its style. -/
+def mapStyle (f : Style → Style) : Cell cs → Cell cs
+  | .glyph g s => .glyph g (f s)
+  | .blank s => .blank (f s)
+  | .wideRight => .wideRight
+
+theorem wellFormed_map_style (f : Style → Style) (l : List (Cell cs)) :
+    wellFormed (l.map (mapStyle f)) = wellFormed l := by
+  induction l using wellFormed.induct with
+  | case1 => rfl
+  | case2 => simp [wellFormed, mapStyle]
+  | case3 _ _ ih => simpa [wellFormed, mapStyle] using ih
+  | case4 g _ _ ih => simp [wellFormed, mapStyle, ih]
+  | case5 g s rest hrest ih =>
+    match rest, hrest with
+    | [], _ => simp [wellFormed, mapStyle]
+    | .blank _ :: _, _ => simp only [List.map_cons, mapStyle, wellFormed] at ih ⊢; rw [ih]
+    | .glyph _ _ :: _, _ => simp only [List.map_cons, mapStyle, wellFormed] at ih ⊢; rw [ih]
+    | .wideRight :: _, h => exact absurd rfl (h _)
+
 theorem wellFormed_replicate_blank (n : Nat) (s : Style) :
     wellFormed (List.replicate n (Cell.blank (cs := cs) s)) := by
   induction n with
@@ -248,6 +268,10 @@ instance {w : Nat} : DecidableEq (Row cs w) := fun a b =>
 def blank (w : Nat) (s : Style := {}) : Row cs w :=
   ⟨List.replicate w (.blank s), by simp, wellFormed_replicate_blank w s⟩
 
+/-- The row drawn with each cell's style mapped by `f`. -/
+def mapStyle {w : Nat} (f : Style → Style) (r : Row cs w) : Row cs w :=
+  ⟨r.cells.map (Cell.mapStyle f), by simp [r.length_eq], by rw [Cell.wellFormed_map_style]; exact r.wf⟩
+
 /-- `seg` written from column `x`, clipped at the right edge. A two-cell glyph half covered
 by it, or cut by the edge, becomes a blank. -/
 def splice {w : Nat} (r : Row cs w) (x : Nat) (seg : List (Cell cs)) (hseg : wellFormed seg) :
@@ -294,6 +318,9 @@ instance : Inhabited (Buffer cs w h) := ⟨blank w h⟩
 def width (_ : Buffer cs w h) : Nat := w
 
 def height (_ : Buffer cs w h) : Nat := h
+
+/-- The buffer drawn with each cell's style mapped by `f`, such as to a terminal's colour depth. -/
+def mapStyle (f : Style → Style) (b : Buffer cs w h) : Buffer cs w h := ⟨b.rows.map (·.mapStyle f)⟩
 
 /-- The cell at `(x, y)`; outside the buffer, a blank. -/
 def get (b : Buffer cs w h) (x y : Nat) : Cell cs :=

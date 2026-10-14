@@ -18,10 +18,10 @@ changed. -/
 
 namespace Tessera
 
-export CrosstermFfi (Event Key Modifiers)
+export CrosstermFfi (Event Key Modifiers MouseEvent MouseKind MouseButton)
 
-/-- Proof that a message is a key or a paste read from the terminal: something only the user can
-do. Its constructor is private: only `App.loop` makes one, so no message from elsewhere, such as
+/-- Proof that a message is a key, a paste or a mouse event read from the terminal: something only
+the user can do. Its constructor is private: only `App.loop` makes one, so no message from elsewhere, such as
 the network, carries one. -/
 structure UserInput where
   private mk ::
@@ -32,6 +32,10 @@ inductive Msg (ε : Type) where
   | key (k : Key) (m : Modifiers) (u : UserInput)
   /-- Text the user pasted, without bracketed paste's markers. -/
   | paste (p : Untrusted.Pasted) (u : UserInput)
+  /-- What the user did with the mouse, when the application captures it. -/
+  | mouse (e : MouseEvent) (u : UserInput)
+  /-- The window gained or lost the focus. -/
+  | focus (gained : Bool)
   | resize (width height : Nat)
   | tick
   /-- An event of the application's own, such as a message from the network. -/
@@ -45,11 +49,13 @@ inductive Incoming (ε : Type) where
   | tick
   | custom (e : ε)
 
-/-- The message for what arrived. Only here is a `UserInput` made, for a key or a paste read from
-the terminal. -/
+/-- The message for what arrived. Only here is a `UserInput` made, for a key, a paste or a mouse
+event read from the terminal. -/
 private def Incoming.toMsg {ε : Type} : Incoming ε → Msg ε
   | .terminal (.key k m) => .key k m ⟨⟩
   | .terminal (.paste text) => .paste (Untrusted.pasted text) ⟨⟩
+  | .terminal (.mouse e) => .mouse e ⟨⟩
+  | .terminal (.focus g) => .focus g
   | .terminal (.resize w h) => .resize w h
   | .tick => .tick
   | .custom e => .custom e
@@ -65,6 +71,20 @@ structure App (cs : Charset) (σ ε : Type) where
   title : σ → Option (Text cs .app) := fun _ => none
   /-- How often to send `Msg.tick`, if at all. -/
   tickMs : Option UInt32 := none
+  /-- Whether to capture the mouse, and receive `Msg.mouse`. A terminal that captures the mouse
+  leaves selecting text to Shift and the mouse. -/
+  mouse : Bool := false
+
+/-- The colour depth the environment asks for: none if `NO_COLOR` is set, 24-bit if `COLORTERM`
+says so, 256 colours if `TERM` does, and 16 otherwise. -/
+def Depth.detect : IO Depth := do
+  if let some v ← IO.getEnv "NO_COLOR" then
+    if !v.isEmpty then return .none
+  if let some v ← IO.getEnv "COLORTERM" then
+    if v == "truecolor" || v == "24bit" then return .truecolor
+  if let some v ← IO.getEnv "TERM" then
+    if (v.splitOn "256color").length > 1 then return .ansi256
+  return .ansi16
 
 /-- What drawing needs from a terminal. -/
 structure Screen where
@@ -80,12 +100,17 @@ quit or `next` has no more. Messages already waiting, which `ready` returns with
 are all taken in before the next frame is drawn, so that a flood of them is drawn once. Returns
 the last state. -/
 partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Incoming ε)))
-    (init : σ) (ready : IO (Option (Incoming ε)) := pure none) : IO σ := do
+    (init : σ) (ready : IO (Option (Incoming ε)) := pure none) (depth : Depth := .truecolor) :
+    IO σ := do
   let (w, h) ← screen.size
-  let frame := (app.draw init).draw w h
+  let frame := render init w h
   screen.write (redraw frame ++ titleOutput none (app.title init))
   go init w h frame (app.title init)
 where
+  /-- The frame for `s`, in the colours the terminal shows. -/
+  render (s : σ) (w h : Nat) : Buffer cs w h :=
+    let frame := (app.draw s).draw w h
+    if depth = .truecolor then frame else frame.mapStyle (Style.downgrade depth)
   /-- The title, written when it changes. -/
   titleOutput (shown new : Option (Text cs .app)) : String :=
     match new with
@@ -110,7 +135,7 @@ where
     if quit then return s
     let (s, w', h', quit) ← drain s w' h'
     if quit then return s
-    let frame := (app.draw s).draw w' h'
+    let frame := render s w' h'
     let out := if hs : w = w' ∧ h = h' then diff (cast (by rw [hs.1, hs.2]) shown) frame
       else redraw frame
     screen.write (out ++ titleOutput title (app.title s))
@@ -125,8 +150,8 @@ def terminal : IO Screen := do
       return (w.toNat, h.toNat)
     write := fun s => do out.putStr s; out.flush }
 
-/-- Run `app` from `init` in the terminal's alternate screen, in raw mode, and return its last
-state. `start` is called once with a function that sends the application one of its own events;
+/-- Run `app` from `init` in the terminal's alternate screen, in raw mode, in the colours the
+environment asks for (`Depth.detect`), and return its last state. `start` is called once with a function that sends the application one of its own events;
 it may keep that function and call it from other tasks. -/
 def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ()) :
     IO σ := do
@@ -134,10 +159,13 @@ def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit :
   let send (m : Incoming ε) : IO Unit := discard <| messages.send m
   let stop ← IO.mkRef false
   let screen ← terminal
+  let depth ← Depth.detect
   CrosstermFfi.enableRawMode
   CrosstermFfi.enterAlternateScreen
   CrosstermFfi.hideCursor
   CrosstermFfi.enableBracketedPaste
+  CrosstermFfi.enableFocusChange
+  if app.mouse then CrosstermFfi.enableMouseCapture
   let input ← IO.asTask (prio := .dedicated) do
     while !(← stop.get) do
       if let some e ← CrosstermFfi.poll 50 then send (.terminal e)
@@ -148,7 +176,7 @@ def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit :
         send .tick
   try
     start (send ∘ .custom)
-    app.loop screen (do IO.wait (← messages.recv)) init messages.tryRecv
+    app.loop screen (do IO.wait (← messages.recv)) init messages.tryRecv depth
   catch e =>
     -- Shown after the terminal is restored: filtered, as it may quote text from elsewhere.
     throw (IO.userError ("\n".intercalate ((Untrusted.lines (cs := cs) (toString e)).1.map (·.text))))
@@ -156,6 +184,8 @@ def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit :
     stop.set true
     discard <| IO.wait input
     discard <| IO.wait ticker
+    if app.mouse then CrosstermFfi.disableMouseCapture
+    CrosstermFfi.disableFocusChange
     CrosstermFfi.disableBracketedPaste
     CrosstermFfi.showCursor
     CrosstermFfi.leaveAlternateScreen

@@ -7,6 +7,10 @@ import Tessera.Widget
 import Tessera.Untrusted
 import Tessera.Terminal
 import Tessera.TrustedPath
+import Tessera.Input
+import Tessera.ListView
+import Tessera.Table
+import Tessera.Consent
 
 /-! # Axioms
 
@@ -76,5 +80,26 @@ open Tessera Untrusted
 
 /-- info: 'Tessera.Roster.build' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms Roster.build
+
+/-- info: 'Tessera.Style.reserved_downgrade' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Style.reserved_downgrade
+
+/-- info: 'Tessera.Buffer.mapStyle' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms Buffer.mapStyle
+
+/-- info: 'Tessera.Text.wrap_width_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Text.wrap_width_le
+
+/-- info: 'Tessera.Input.cursor_visible' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Input.cursor_visible
+
+/-- info: 'Tessera.selected_visible' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms selected_visible
+
+/-- info: 'Tessera.fitWidths_le' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms fitWidths_le
+
+/-- info: 'Tessera.answer_refocus' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms answer_refocus
 
 end Tessera.Tests.Axioms

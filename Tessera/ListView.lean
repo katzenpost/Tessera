@@ -43,8 +43,8 @@ def select (l : ListView α) (n : Nat) (rows : Nat) : ListView α :=
 
 def push (l : ListView α) (a : α) : ListView α := { l with items := l.items.push a }
 
-/-- The list after `msg`, when `rows` rows of it are shown: Up and Down move by one, Page Up and
-Page Down by a page, Home and End to the first and last. -/
+/-- The list after `msg`, when `rows` rows of it are shown: Up and Down, and the mouse wheel, move
+by one, Page Up and Page Down by a page, Home and End to the first and last. -/
 def update {ε : Type} (msg : Msg ε) (rows : Nat) (l : ListView α) : ListView α :=
   match msg with
   | .key .up _ _ => l.select (l.selected - 1) rows
@@ -53,7 +53,18 @@ def update {ε : Type} (msg : Msg ε) (rows : Nat) (l : ListView α) : ListView 
   | .key .pageDown _ _ => l.select (l.selected + max rows 1) rows
   | .key .home _ _ => l.select 0 rows
   | .key .end_ _ _ => l.select l.items.size rows
+  | .mouse { kind := .scrollUp, .. } _ => l.select (l.selected - 1) rows
+  | .mouse { kind := .scrollDown, .. } _ => l.select (l.selected + 1) rows
   | _ => l
+
+/-- Select the item on row `y` of the list as it is drawn in `rows` rows, as when it is clicked
+there; nothing if no item is drawn there. -/
+def click (l : ListView α) (y rows : Nat) : ListView α :=
+  if y < rows then
+    let n := scrollTo l.offset l.selected rows + y
+    if n < l.items.size then { l.select n rows with offset := scrollTo l.offset l.selected rows }
+    else l
+  else l
 
 variable {cs : Charset} {o : Origin}
 

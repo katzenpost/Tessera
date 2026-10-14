@@ -40,6 +40,11 @@ def moved (l : ListView String) (ks : List Key) (rows : Nat) : IO (ListView Stri
   feed { draw := fun _ => .empty, update := fun m l => pure (l.update m rows, false) } l
     (ks.map (.key ·))
 
+def countFocus : Msg Unit → Nat → IO (Nat × Bool)
+  | .focus true, n => pure (n + 1, false)
+  | .focus false, n => pure (n + 10, false)
+  | _, n => pure (n, false)
+
 def tests : TestM Unit := do
   checkEq "type" ("hello", 5, #[]) (← typed (keys "hello"))
   checkEq "left and insert" ("hexllo", 3, #[]) (← typed (keys "hello" ++ [.key .left, .key .left, .key .left] ++ keys "x"))
@@ -71,6 +76,18 @@ def tests : TestM Unit := do
   checkEq "list drawn" ["2  ", "3  ", "4  "] (drawn (l.view fun s => str (Untrusted.line s)) 3 3)
   let l ← moved l [.up] 3
   checkEq "moving up within view does not scroll" 2 l.offset
+  let l ← feed { draw := fun _ => .empty, update := fun m l => pure (l.update m 3, false) } (listOf 10)
+    [.mouse { kind := .scrollDown, column := 0, row := 0 }, .mouse { kind := .scrollDown, column := 0, row := 0 },
+     .mouse { kind := .scrollUp, column := 0, row := 0 }]
+  checkEq "wheel" 1 l.selected
+  checkEq "click" 2 ((listOf 10).click 2 3).selected
+  checkEq "click past the items" 0 ((listOf 2).click 2 3).selected
+  checkEq "click below the list" 0 ((listOf 10).click 3 3).selected
+  let scrolled := (listOf 10).select 9 3
+  checkEq "click in a scrolled list" 8 (scrolled.click 1 3).selected
+  checkEq "click keeps the scroll" scrolled.offset (scrolled.click 1 3).offset
+  let focus ← feed { draw := fun _ => .empty, update := countFocus } 0 [.focus true, .focus false]
+  checkEq "focus" 11 focus
   let t : Widget CS .remote := table [.fit, .ratio 1, .fixed 3] [t!"id", t!"name", t!"n"]
     [[t!"1", t!"alice", t!"12345"], [t!"22", t!"bob", t!"7"]]
   checkEq "table" ["id name  n  ", "1  alice 123", "22 bob   7  "] (drawn t 12 3)
