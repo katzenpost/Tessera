@@ -30,13 +30,11 @@ namespace DiffState
 
 /-- Write `g`, `width` cells wide, at `(x, y)`. -/
 def write (s : DiffState cs) (x y : Nat) (g : Glyph cs) (width : Nat) (style : Style) :
-    DiffState cs := Id.run do
-  let mut s := s
-  if s.cursor != some (x, y) then
-    s := { s with ops := s.ops.push (.moveTo x y) }
-  if s.style != some style then
-    s := { s with ops := s.ops.push (.sgr style), style := some style }
-  { s with ops := s.ops.push (.print g), cursor := some (x + width, y) }
+    DiffState cs :=
+  let move : List (Op cs) := if s.cursor = some (x, y) then [] else [.moveTo x y]
+  let sgr : List (Op cs) := if s.style = some style then [] else [.sgr style]
+  { ops := s.ops ++ (move ++ sgr ++ [Op.print g]).toArray, cursor := some (x + width, y),
+    style := some style }
 
 end DiffState
 
@@ -57,7 +55,7 @@ def drawRow (y : Nat) (all : Bool) :
     drawRow y all (x + 1) ns os st
   | _, _, _, st => st
 
-private def drawRows {w h : Nat} (old new : Buffer cs w h) (all : Bool) (start : DiffState cs) :
+def drawRows {w h : Nat} (old new : Buffer cs w h) (all : Bool) (start : DiffState cs) :
     Array (Op cs) :=
   ((List.range h).foldl (init := start) fun s y =>
     drawRow y all 0 (new.rows[y]?.map (·.cells) |>.getD [])

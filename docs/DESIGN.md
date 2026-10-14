@@ -114,7 +114,7 @@ structure Glyph (cs : Charset) where
 
 inductive Cell (cs : Charset)
   | glyph (g : Glyph cs) (style : Style)
-  | wideRight (style : Style)
+  | wideRight
   | blank (style : Style)
 
 structure Row (cs : Charset) (w : Nat) where
@@ -126,11 +126,11 @@ structure Buffer (cs : Charset) (w h : Nat) where
   rows : Vector (Row cs w) h
 ```
 
-A cell holds a glyph, the right half of a two-cell glyph, or nothing. A space is always a blank, so that two buffers that look the same are equal.
+A cell holds a glyph, the right half of a two-cell glyph, or nothing. The right half is drawn in its glyph's style and has none of its own, and a space is always a blank, so that two rows that look the same on a terminal are equal.
 
 The buffer's size is part of its type, so every frame of one size has one type. Each row carries two proofs:
 - it has exactly `w` cells;
-- it is well formed: every two-cell glyph is followed by its right half, and a right half follows nothing else.
+- it is well formed: every two-cell glyph is followed by its right half, a right half follows nothing else, and no glyph is a space.
 
 Every write goes through `Row.splice`, which writes a well-formed run of cells from a column, clipped at the right edge. It keeps the cells before the run with `Cell.cut`, and the cells after it with `Cell.skip`. Each of these turns a two-cell glyph it splits in half into a blank. `wellFormed_cut`, `wellFormed_skip` and `wellFormed_append` show that the result is well formed again, and the lengths add up to `w`.
 
@@ -245,7 +245,11 @@ Four theorems state Tessera's guarantees against this model:
 - **`output_only_own`:** reading the encoding of a list of operations gives back exactly those operations' tokens, in order.
 - **`diff_own`** and **`redraw_own`:** every token of a frame's output is `Own`. Each is a printed character that only prints, or one of Tessera's control sequences, which move the cursor (`H`), set the style (`m`) or clear the screen (`J`).
 
-The width guarantee is stated against an `Emulator`. **`diff_correct`:** for any `em : Emulator cs`, applying `diffOps old new` to a screen showing `old` leaves it showing `new`. The cursor ends every run where Tessera computed, so text cannot drift into the cell beside it.
+The width guarantee is stated against an `Emulator`. A `Term` is a terminal's screen, cursor and style. `Term.apply em` carries out an operation the way a terminal measuring glyphs as `em` does: moving the cursor, setting the style, clearing the screen, or printing a glyph `em.width` cells wide at the cursor and moving the cursor past it. Two theorems hold for any `em : Emulator cs`:
+- **`diff_correct`:** applying `diffOps old new` to a terminal showing `old` leaves it showing `new`, whatever its cursor and style were.
+- **`redraw_correct`:** applying `redrawOps new` to any terminal leaves it showing `new`.
+
+The proof follows `diff` cell by cell. `Sim` says that the cursor and style `diff` assumes are the terminal's. `drawRow_correct` says that while a row is drawn, the terminal's row is the cells of `new` passed so far, followed by what is left of the row it showed. Every glyph is printed where Tessera computed, and the cursor ends where the next one begins, so no text drifts into the cell beside it. `em.agrees` is used exactly where a glyph's width is: everything else holds for any terminal.
 
 ## Applications
 

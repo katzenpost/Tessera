@@ -9,6 +9,7 @@ import Tessera.Buffer
 import Tessera.VT
 import Tessera.Ansi
 import Tessera.Diff
+import Tessera.Terminal
 import Tessera.Widget
 import Tessera.App
 import Tessera.Text

@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 import Tessera.Widget
 import Tessera.Untrusted
-import Tessera.Diff
+import Tessera.Terminal
 
 /-! # Axioms
 
@@ -60,5 +60,11 @@ open Tessera Untrusted
 
 /-- info: 'Tessera.diff_own' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms diff_own
+
+/-- info: 'Tessera.diff_correct' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms diff_correct
+
+/-- info: 'Tessera.redraw_correct' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms redraw_correct
 
 end Tessera.Tests.Axioms
