@@ -22,26 +22,62 @@ variable {cs : Charset}
 structure Glyph (cs : Charset) where
   char : Char
   printable : cs.Printable char
+  /-- Combining accents drawn over the character, in the same cells. -/
+  marks : List Char := []
+  marks_combining : ∀ m ∈ marks, Combining m := by simp
+
+theorem Glyph.ext' {a b : Glyph cs} (hc : a.char = b.char) (hm : a.marks = b.marks) : a = b := by
+  cases a; cases b; simp_all
 
 instance : DecidableEq (Glyph cs) := fun a b =>
-  if h : a.char = b.char then isTrue (by cases a; cases b; simp_all)
-  else isFalse fun e => h (congrArg Glyph.char e)
+  if h : a.char = b.char ∧ a.marks = b.marks then isTrue (Glyph.ext' h.1 h.2)
+  else isFalse fun e => h ⟨congrArg Glyph.char e, congrArg Glyph.marks e⟩
 
 namespace Glyph
 
 /-- A space, which every charset allows. -/
-def space : Glyph cs := ⟨' ', cs.printable_of_ascii (by decide) (by decide)⟩
+def space : Glyph cs := { char := ' ', printable := cs.printable_of_ascii (by decide) (by decide) }
 
-def ofChar? (c : Char) : Option (Glyph cs) := if h : cs.Printable c then some ⟨c, h⟩ else none
+def ofChar? (c : Char) : Option (Glyph cs) :=
+  if h : cs.Printable c then some { char := c, printable := h } else none
 
 def width (g : Glyph cs) : Nat := cs.width g.char
 
 def wide (g : Glyph cs) : Bool := cs.width g.char == 2
 
+/-- The most accents kept on one glyph. -/
+def maxMarks : Nat := 4
+
+theorem marks_append {l : List Char} (hl : ∀ x ∈ l, Combining x) {m : Char} (hm : Combining m) :
+    ∀ x ∈ l ++ [m], Combining x := by
+  intro x hx
+  rcases List.mem_append.mp hx with hx | hx
+  · exact hl x hx
+  · simp at hx; exact hx ▸ hm
+
+/-- `g` with the accent `m` over it, if it is not a space and has room for another. -/
+def addMark (g : Glyph cs) (m : Char) (hm : Combining m) : Option (Glyph cs) :=
+  if g.char != ' ' && g.marks.length < maxMarks then
+    some { g with marks := g.marks ++ [m], marks_combining := marks_append g.marks_combining hm }
+  else none
+
+/-- The characters written for `g`: it, then its accents. -/
+def chars (g : Glyph cs) : List Char := g.char :: g.marks
+
 end Glyph
 
-/-- The characters of `s` that `cs` allows; the rest take no cell and are left out. -/
-def Charset.glyphs (cs : Charset) (s : String) : List (Glyph cs) := s.toList.filterMap Glyph.ofChar?
+/-- The glyphs of `s`: each character `cs` allows, with the combining accents after it, up to
+`Glyph.maxMarks` of them. Other characters take no cell and are left out. -/
+def Charset.glyphs (cs : Charset) (s : String) : List (Glyph cs) :=
+  (s.toList.foldl (init := []) fun acc c =>
+    if h : cs.Printable c then { char := c, printable := h } :: acc
+    else if hm : Combining c then
+      match acc with
+      | g :: r => match g.addMark c hm with
+        | some g' => g' :: r
+        | none => acc
+      | [] => acc
+    else acc).reverse
 
 /-- How many cells `s` takes, leaving out the characters `cs` does not allow. -/
 def Charset.textWidth (cs : Charset) (s : String) : Nat :=
@@ -55,7 +91,7 @@ inductive Cell (cs : Charset) where
 
 /-- Whether two cells are the same, written out so that comparing frames is quick. -/
 def Cell.beq : Cell cs → Cell cs → Bool
-  | .glyph g s, .glyph g' s' => g.char == g'.char && s.beq s'
+  | .glyph g s, .glyph g' s' => g.char == g'.char && g.marks == g'.marks && s.beq s'
   | .blank s, .blank s' => s.beq s'
   | .wideRight, .wideRight => true
   | _, _ => false
@@ -65,8 +101,8 @@ theorem Cell.beq_iff {a b : Cell cs} : a.beq b = true ↔ a = b := by
   case glyph.glyph g s g' s' =>
     intro _
     constructor
-    · intro h; cases g; cases g'; simp_all
-    · rintro rfl; rfl
+    · intro h; exact Glyph.ext' h.1 h.2
+    · rintro rfl; exact ⟨rfl, rfl⟩
 
 instance : DecidableEq (Cell cs) := fun _ _ => decidable_of_iff _ Cell.beq_iff
 
@@ -93,6 +129,11 @@ def style : Cell cs → Style
 def char : Cell cs → Char
   | .glyph g _ => g.char
   | _ => ' '
+
+/-- The accents drawn over the character. -/
+def marks : Cell cs → List Char
+  | .glyph g _ => g.marks
+  | _ => []
 
 def isContinuation : Cell cs → Bool
   | .wideRight => true
@@ -377,10 +418,10 @@ def blit {sw sh : Nat} (b : Buffer cs w h) (x y : Nat) (src : Buffer cs sw sh) :
 def crop (b : Buffer cs w h) (x y cw ch : Nat) : Buffer cs cw ch :=
   ⟨.ofFn fun j => if hy : y + j.val < h then b.rows[y + j.val].slice x cw else .blank cw⟩
 
-/-- The characters of row `y`, without continuations. -/
+/-- The characters of row `y`, with their accents, without continuations. -/
 def row (b : Buffer cs w h) (y : Nat) : String :=
   if hy : y < h then
-    String.ofList <| b.rows[y].cells.filterMap fun c => if c.isContinuation then none else some c.char
+    String.ofList <| b.rows[y].cells.flatMap fun c => if c.isContinuation then [] else c.char :: c.marks
   else ""
 
 /-- The buffer's text, one line per row. -/

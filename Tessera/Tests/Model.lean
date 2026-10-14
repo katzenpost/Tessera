@@ -75,9 +75,20 @@ def control (t : Terminal cs w h) (p : String) (final : Char) : Terminal cs w h 
   | 'C' => { t with x := min (t.x + count p) (w - 1) }
   | _ => t
 
+/-- Print `c`; a combining accent goes over the character before the cursor, as terminals draw
+it. -/
 def putChar (t : Terminal cs w h) (c : Char) : Terminal cs w h :=
-  let (screen, x) := t.screen.putString t.x t.y (cs.glyphs (String.singleton c)) t.style
-  { t with screen, x := x.val }
+  if hm : Combining c then
+    let x := if t.x ≥ 2 && (t.screen.get (t.x - 1) t.y).isContinuation then t.x - 2 else t.x - 1
+    match t.screen.get x t.y with
+    | .glyph g s =>
+      match g.addMark c hm with
+      | some g' => { t with screen := (t.screen.putString x t.y [g'] s).1 }
+      | none => t
+    | _ => t
+  else
+    let (screen, x) := t.screen.putString t.x t.y (cs.glyphs (String.singleton c)) t.style
+    { t with screen, x := x.val }
 
 def apply (t : Terminal cs w h) : VT.Token → Terminal cs w h
   | .print c => t.putChar c

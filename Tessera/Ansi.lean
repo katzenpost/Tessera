@@ -99,7 +99,7 @@ def Op.chars (p : Placement) : Op cs → List Char
   | .clear => match p with
     | .fullscreen => csiChars [2] 'J'
     | .inline _ => '\x1b' :: '8' :: csiChars [] 'J'
-  | .print g => [g.char]
+  | .print g => g.chars
   | .title t => '\x1b' :: ']' :: '0' :: ';' :: (t.text.toList ++ ['\x07'])
   | .enterInline n =>
     '\r' :: (List.replicate (n - 1) '\n' ++ relChars (n - 1) 'A' ++ ['\x1b', '7'])
@@ -117,7 +117,7 @@ def Op.tokens (p : Placement) : Op cs → List Token
   | .clear => match p with
     | .fullscreen => [.csi (paramChars [2]) [] 'J']
     | .inline _ => [.esc [] '8', .csi [] [] 'J']
-  | .print g => [.print g.char]
+  | .print g => g.chars.map .print
   | .title t => [.osc ('0' :: ';' :: t.text.toList)]
   | .enterInline n =>
     .control '\r' :: (List.replicate (n - 1) (.control '\n') ++ relTokens (n - 1) 'A' ++ [.esc [] '7'])
@@ -164,6 +164,13 @@ theorem paramChars_param (ns : List Nat) : ∀ p ∈ paramChars ns, isParam p :=
       · exact digits n p hp
       · decide
       · exact ih p (by simpa [paramChars] using hp)
+
+/-- A glyph's characters, it and its accents, only print. -/
+theorem glyph_inert (g : Glyph cs) : ∀ c ∈ g.chars, Inert c := by
+  intro c hc
+  rcases List.mem_cons.mp hc with rfl | hc
+  · exact inert_of_text (.inl g.printable)
+  · exact inert_of_text (cs := cs) (.inr (g.marks_combining c hc))
 
 theorem run_esc {f : Char} (hf : f = '7' ∨ f = '8') (rest : List Char) :
     run .ground ('\x1b' :: f :: rest) = .esc [] f :: run .ground rest := by
@@ -238,10 +245,7 @@ theorem run_op (p : Placement) (op : Op cs) (rest : List Char) :
       simp only [Op.chars, Op.tokens, List.cons_append]
       rw [run_esc (.inr rfl), run_csiOf [] (f := 'J') (by decide)]
       rfl
-  | print g =>
-    have := run_inert (l := [g.char])
-      (fun c hc => by simp at hc; subst hc; exact inert_of_text (.inl g.printable)) rest
-    simpa [Op.chars, Op.tokens] using this
+  | print g => simpa [Op.chars, Op.tokens] using run_inert (glyph_inert g) rest
   | title t =>
     have hb : ∀ c ∈ '0' :: ';' :: t.text.toList, Inert c := by
       intro c hc
@@ -314,7 +318,10 @@ theorem own_tokens (p : Placement) (op : Op cs) : ∀ t ∈ op.tokens p, Own t :
       rintro t (rfl | rfl)
       · exact .inr rfl
       · exact ⟨by simp, by simp⟩
-  | print g => simp only [Op.tokens, List.mem_singleton]; rintro t rfl; exact inert_of_text (.inl g.printable)
+  | print g =>
+    simp only [Op.tokens, List.mem_map]
+    rintro t ⟨c, hc, rfl⟩
+    exact glyph_inert g c hc
   | title t => simp only [Op.tokens, List.mem_singleton]; rintro t' rfl; exact fun c hc => inert_of_text (t.charsOk c hc)
   | enterInline n =>
     intro t ht

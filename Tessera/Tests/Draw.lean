@@ -67,11 +67,20 @@ def bufferTests : TestM Unit := do
   checkEq "crop cuts a wide char" ["b ", "  "] (b.crop 2 0 2 2).lines
   check "outside reads blank" (b.get 9 9 == default)
   check "no glyph from a control character" ((Glyph.ofChar? '\x1b' : Option (Glyph CS)).isNone)
+  checkEq "an accent goes on the glyph before it" [('e', ['\u0301']), ('x', [])]
+    ((gl "e\u0301x").map fun g => (g.char, g.marks))
+  checkEq "four accents at most" 4 (((gl ("e" ++ String.ofList (List.replicate 9 '\u0301'))).head?.map (·.marks.length)).getD 0)
+  checkEq "no accent on a space, nor before any glyph" [(' ', []), ('a', [])]
+    ((gl "\u0301 \u0301a").map fun g => (g.char, g.marks))
+  let (acc, _) := (Buffer.blank (cs := CS) 4 1).putString 0 0 (gl "e\u0301漢\u0308")
+  checkEq "accents are drawn" ["e\u0301漢\u0308 "] acc.lines
+  check "and written, after their character" (((redraw acc).splitOn "e\u0301漢\u0308").length == 2)
+  checkEq "a terminal draws them where they were" acc.lines (Terminal.new (cs := CS) 4 1 |>.run (redraw acc)).screen.lines
 
 def randomBuffer {cs : Charset} (w h : Nat) (r : Rng) : Buffer cs w h × Rng := Id.run do
   let styles : Array Style := #[{}, Style.fgOf .red, { bold := true, bg := some (.indexed 17) },
     Style.fgOf (.rgb 1 2 3)]
-  let chars := #['a', 'b', ' ', '漢', '🦀', 'é', '·', '→']
+  let chars := #['a', 'b', ' ', '漢', '🦀', 'é', '·', '→', '\u0301', '\u0308']
   let mut b : Buffer cs w h := Buffer.blank w h
   let mut r := r
   let (n, r1) := r.next 12
