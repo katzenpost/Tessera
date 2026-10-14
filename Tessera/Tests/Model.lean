@@ -4,6 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 -/
 
 import Tessera.Buffer
+import Tessera.Tests.Util
 
 /-! # A model terminal
 
@@ -11,17 +12,19 @@ Interprets the escape sequences Tessera writes, to check what a terminal would s
 
 namespace Tessera.Tests
 
-structure Terminal where
-  screen : Buffer
+structure Terminal (w h : Nat) where
+  screen : Buffer CS w h
   x : Nat := 0
   y : Nat := 0
   style : Style := {}
 
 namespace Terminal
 
-def new (width height : Nat) : Terminal := { screen := .blank width height }
+variable {w h : Nat}
 
-def showing (b : Buffer) : Terminal := { screen := b }
+def new (width height : Nat) : Terminal width height := { screen := .blank width height }
+
+def showing (b : Buffer CS w h) : Terminal w h := { screen := b }
 
 /-- Apply SGR parameters to a style. -/
 partial def sgr (s : Style) : List Nat → Style
@@ -47,25 +50,25 @@ partial def sgr (s : Style) : List Nat → Style
 
 def params (p : String) : List Nat := (p.splitOn ";").map (·.toNat!)
 
-def control (t : Terminal) (p : String) (final : Char) : Terminal :=
+def control (t : Terminal w h) (p : String) (final : Char) : Terminal w h :=
   match final with
   | 'H' =>
     match params p with
     | [r, c] => { t with y := r - 1, x := c - 1 }
     | _ => { t with x := 0, y := 0 }
   | 'm' => { t with style := sgr t.style (params p) }
-  | 'J' => { t with screen := .blank t.screen.width t.screen.height { bg := t.style.bg } }
+  | 'J' => { t with screen := .blank w h { bg := t.style.bg } }
   | _ => t
 
-def putChar (t : Terminal) (c : Char) : Terminal :=
-  let (screen, x) := t.screen.putString t.x t.y (String.singleton c) t.style
-  { t with screen, x }
+def putChar (t : Terminal w h) (c : Char) : Terminal w h :=
+  let (screen, x) := t.screen.putString t.x t.y (CS.glyphs (String.singleton c)) t.style
+  { t with screen, x := x.val }
 
 /-- Run `out` on the terminal. -/
-partial def run (t : Terminal) (out : String) : Terminal :=
+partial def run (t : Terminal w h) (out : String) : Terminal w h :=
   go t out.toList
 where
-  go (t : Terminal) : List Char → Terminal
+  go (t : Terminal w h) : List Char → Terminal w h
     | '\x1b' :: '[' :: rest =>
       let p := rest.takeWhile fun c => c.isDigit || c == ';'
       match rest.drop p.length with

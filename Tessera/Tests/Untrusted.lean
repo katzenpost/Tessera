@@ -72,16 +72,16 @@ def corpus : List (String × String) := [
   ("DEL", "back\x7Fspace")]
 
 /-- `text` between two bordered panes, as an application might draw a message. -/
-def framed (text : List Safe) : Buffer :=
-  (hBox [hLimit 6 (border (str "left")), border (vBox (text.map safe ++ [fill])),
+def framed (text : List Safe) : Buffer CS 40 6 :=
+  (hBox (cs := CS) [hLimit 6 (border (str "left")), border (vBox (text.map safe ++ [fill])),
     hLimit 7 (border (str "right"))]).draw 40 6
 
 /-- The borders between the panes, on every row inside them. -/
-def bordersHold (b : Buffer) : Bool :=
+def bordersHold (b : Buffer CS 40 6) : Bool :=
   (List.range 4).all fun y => [6, 32].all fun x => (b.get x (y + 1)).char == '│'
 
-def cellsClean (b : Buffer) : Bool :=
-  (List.range b.height).all fun y => (List.range b.width).all fun x =>
+def cellsClean (b : Buffer CS 40 6) : Bool :=
+  (List.range 6).all fun y => (List.range 40).all fun x =>
     let c := b.get x y
     c.isContinuation || !forbidden c.char
 
@@ -110,7 +110,7 @@ def tests : TestM Unit := do
     let b := framed (lines s!"{payload}\n{payload} and {payload}")
     check s!"{what}: nothing forbidden reaches a cell" (cellsClean b)
     check s!"{what}: the panes keep their borders" (bordersHold b)
-    check s!"{what}: the output writes nothing but its own CSI" (onlyCsi (diff none b))
+    check s!"{what}: the output writes nothing but its own CSI" (onlyCsi (redraw b))
     check s!"{what}: nothing that steers is passed on"
       (!(withoutControls payload).any steers)
   checkEq "controls show as Control Pictures" "␛]0;x␇" (line "\x1b]0;x\x07").text
@@ -118,9 +118,9 @@ def tests : TestM Unit := do
   checkEq "lines are capped" 20 (lines (String.intercalate "\n" (List.replicate 30 "x"))).length
   checkEq "marks are capped" 1 ((line ("e" ++ String.ofList (List.replicate 9 '́'))).text.toList.filter (· == '␦')).length
   checkEq "paste markers go" "ab" (pasted "a\x1b[201~b\x1b[200~")
-  let poisoned := (Buffer.blank 3 1).set 1 0 { char := '\x1b' }
-  check "a control character set in a cell is drawn as a stand-in"
-    (onlyCsi (diff none poisoned) && ((diff none poisoned).splitOn "␦").length == 2)
+  check "no control character becomes a glyph"
+    ((List.range 0xA0).all fun n => n ≥ 0x20 && n != 0x7F && n < 0x80 ||
+      (Glyph.ofChar? (Char.ofNat n) : Option (Glyph CS)).isNone)
   check "look-alike names share a skeleton" (skeleton "Alice" == skeleton "аlicе")
   check "names that differ do not" (skeleton "alice" != skeleton "alicia")
   check "mixed scripts" (mixedScript "pаypal" && !mixedScript "paypal")

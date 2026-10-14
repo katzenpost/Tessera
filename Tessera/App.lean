@@ -24,9 +24,10 @@ inductive Msg (ε : Type) where
   | tick
   | custom (e : ε)
 
-/-- An application with state `σ` and events of its own of type `ε`. -/
-structure App (σ ε : Type) where
-  draw : σ → Widget
+/-- An application with state `σ` and events of its own of type `ε`, drawn with the characters
+`cs` allows. -/
+structure App (cs : Charset) (σ ε : Type) where
+  draw : σ → Widget cs
   /-- The new state, and whether to quit. -/
   update : Msg ε → σ → IO (σ × Bool)
   /-- How often to send `Msg.tick`, if at all. -/
@@ -39,27 +40,30 @@ structure Screen where
 
 namespace App
 
-variable {σ ε : Type}
+variable {cs : Charset} {σ ε : Type}
 
 /-- Draw `init`, then update and draw again for each message from `next`, until `update` asks to
 quit or `next` has no more. Returns the last state. -/
-partial def loop (app : App σ ε) (screen : Screen) (next : IO (Option (Msg ε))) (init : σ) :
+partial def loop (app : App cs σ ε) (screen : Screen) (next : IO (Option (Msg ε))) (init : σ) :
     IO σ := do
   let (w, h) ← screen.size
   let frame := (app.draw init).draw w h
-  screen.write (diff none frame)
-  go init frame w h
+  screen.write (redraw frame)
+  go init w h frame
 where
-  go (s : σ) (shown : Buffer) (w h : Nat) : IO σ := do
+  go (s : σ) (w h : Nat) (shown : Buffer cs w h) : IO σ := do
     let some m ← next | return s
-    let (w, h) := match m with
+    let (w', h') := match m with
       | .input (.resize w' h') => (w', h')
       | _ => (w, h)
     let (s, quit) ← app.update m s
     if quit then return s
-    let frame := (app.draw s).draw w h
-    screen.write (diff (some shown) frame)
-    go s frame w h
+    let frame := (app.draw s).draw w' h'
+    if hs : w = w' ∧ h = h' then
+      screen.write (diff (cast (by rw [hs.1, hs.2]) shown) frame)
+    else
+      screen.write (redraw frame)
+    go s w' h' frame
 
 /-- The terminal, through crossterm and standard output. -/
 def terminal : IO Screen := do
@@ -73,7 +77,7 @@ def terminal : IO Screen := do
 /-- Run `app` from `init` in the terminal's alternate screen, in raw mode, and return its last
 state. `start` is called once with a function that sends the application one of its own events;
 it may keep that function and call it from other tasks. -/
-def run (app : App σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ()) :
+def run (app : App cs σ ε) (init : σ) (start : (ε → IO Unit) → IO Unit := fun _ => pure ()) :
     IO σ := do
   let messages ← Std.CloseableChannel.new (α := Msg ε)
   let send (m : Msg ε) : IO Unit := discard <| messages.send m

@@ -13,6 +13,8 @@ list; Esc or Ctrl+C quits. -/
 
 open Tessera Widget
 
+abbrev W := Widget Charset.standard
+
 structure State where
   items : Array String
   selected : Nat := 0
@@ -20,16 +22,16 @@ structure State where
   beats : Nat := 0
 
 /-- The items, the selected one highlighted, scrolled to keep it in view. -/
-def list (items : Array String) (selected : Nat) : Widget where
+def list (items : Array String) (selected : Nat) : W where
   hPolicy := .greedy
   vPolicy := .greedy
   render ctx :=
     let offset := selected + 1 - min (selected + 1) ctx.height
-    let row (i : Nat) (s : String) :=
+    let row (i : Nat) (s : String) : W :=
       if i == selected then withStyle { reverse := true } (hBox [str s, fill]) else str s
     (viewport offset (vBox (items.toList.zipIdx.map fun (s, i) => row i s))).render ctx
 
-def draw (s : State) : Widget :=
+def draw (s : State) : W :=
   vBox [
     hBox [
       hLimit 28 (borderWithLabel " Items " (list s.items s.selected)),

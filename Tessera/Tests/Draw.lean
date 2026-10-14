@@ -26,31 +26,35 @@ def sgrTests : TestM Unit := do
     { fg := some .red, bg := some .blue })
   check "over replaces color" ((Style.fgOf .red).over (Style.fgOf .blue) == Style.fgOf .red)
 
+def gl (s : String) : List (Glyph CS) := CS.glyphs s
+
 def bufferTests : TestM Unit := do
   checkEq "char widths" [1, 2, 2, 0, 0] (['a', '漢', '🦀', '\x07', '́'].map charWidth)
   checkEq "string width" 5 (stringWidth "a漢🦀")
-  let (b, x) := (Buffer.blank 5 2).putString 1 0 "ab漢"
+  let (b, x) := (Buffer.blank (cs := CS) 5 2).putString 1 0 (gl "ab漢")
   checkEq "put string" [" ab漢", "     "] b.lines
-  checkEq "column after" 5 x
+  checkEq "column after" 5 x.val
   check "continuation" (b.get 4 0).isContinuation
-  let (c, _) := (Buffer.blank 4 1).putString 2 0 "a漢"
+  let (c, _) := (Buffer.blank (cs := CS) 4 1).putString 2 0 (gl "a漢")
   checkEq "wide char clipped" ["  a "] c.lines
-  let (d, _) := (Buffer.blank 4 1).putString 0 0 "abcdef"
+  let (d, _) := (Buffer.blank (cs := CS) 4 1).putString 0 0 (gl "abcdef")
   checkEq "clipped at the edge" ["abcd"] d.lines
-  let e := b.set 4 0 { char := 'z' }
+  let e := (b.putString 4 0 (gl "z")).1
   checkEq "overwrite right half" [" ab z", "     "] e.lines
-  let f := b.set 3 0 { char := 'z' }
+  let f := (b.putString 3 0 (gl "z")).1
   checkEq "overwrite left half" [" abz ", "     "] f.lines
-  let small := (Buffer.blank 2 1).putString 0 0 "xy" |>.1
+  let small := (Buffer.blank (cs := CS) 2 1).putString 0 0 (gl "xy") |>.1
   checkEq "blit clipped" [" ab漢", "    x"] (b.blit 4 1 small).lines
-  check "outside reads blank" (b.get 9 9 == {})
+  checkEq "blit cuts a wide char" [" ab x", "     "] (b.blit 4 0 small).lines
+  checkEq "crop cuts a wide char" ["b ", "  "] (b.crop 2 0 2 2).lines
+  check "outside reads blank" (b.get 9 9 == default)
+  check "no glyph from a control character" ((Glyph.ofChar? '\x1b' : Option (Glyph CS)).isNone)
 
-/-- A random buffer: strings of plain and wide characters in a few styles. -/
-def randomBuffer (w h : Nat) (r : Rng) : Buffer × Rng := Id.run do
+def randomBuffer (w h : Nat) (r : Rng) : Buffer CS w h × Rng := Id.run do
   let styles : Array Style := #[{}, Style.fgOf .red, { bold := true, bg := some (.indexed 17) },
     Style.fgOf (.rgb 1 2 3)]
   let chars := #['a', 'b', ' ', '漢', '🦀', 'é']
-  let mut b := Buffer.blank w h
+  let mut b : Buffer CS w h := Buffer.blank w h
   let mut r := r
   let (n, r1) := r.next 12
   r := r1
@@ -65,27 +69,27 @@ def randomBuffer (w h : Nat) (r : Rng) : Buffer × Rng := Id.run do
       let (ci, r') := r.next chars.size
       r := r'
       s := s.push chars[ci]!
-    b := (b.putString x y s styles[si]!).1
+    b := (b.putString x y (gl s) styles[si]!).1
   return (b, r)
 
 def diffTests : TestM Unit := do
-  let (b, _) := (Buffer.blank 6 2).putString 1 1 "hi"
-  checkEq "same buffer, no output" "" (diff (some b) b)
-  let b2 := b.set 0 0 { char := 'x' }
-  checkEq "one cell" ("\x1b[1;1H" ++ "\x1b[0mx" ++ "\x1b[0m") (diff (some b) b2)
-  let b3 := (b.putString 1 1 "yo").1
-  checkEq "one run, one move" ("\x1b[2;2H\x1b[0myo\x1b[0m") (diff (some b) b3)
-  let b4 := (b.putString 1 1 "hi" (Style.fgOf .red)).1
-  checkEq "a style change" ("\x1b[2;2H\x1b[0;31mhi\x1b[0m") (diff (some b) b4)
-  check "resize redraws" ((diff (some b) (Buffer.blank 3 3)).startsWith (Ansi.resetStyle ++ Ansi.clearScreen))
-  check "first frame shows the buffer" ((Terminal.new 6 2 |>.run (diff none b)).screen == b)
+  let (b, _) := (Buffer.blank (cs := CS) 6 2).putString 1 1 (gl "hi")
+  checkEq "same buffer, no output" "" (diff b b)
+  let b2 := (b.putString 0 0 (gl "x")).1
+  checkEq "one cell" ("\x1b[1;1H" ++ "\x1b[0mx" ++ "\x1b[0m") (diff b b2)
+  let b3 := (b.putString 1 1 (gl "yo")).1
+  checkEq "one run, one move" ("\x1b[2;2H\x1b[0myo\x1b[0m") (diff b b3)
+  let b4 := (b.putString 1 1 (gl "hi") (Style.fgOf .red)).1
+  checkEq "a style change" ("\x1b[2;2H\x1b[0;31mhi\x1b[0m") (diff b b4)
+  check "a redraw clears first" ((redraw b).startsWith (Ansi.resetStyle ++ Ansi.clearScreen))
+  check "first frame shows the buffer" ((Terminal.new 6 2 |>.run (redraw b)).screen == b)
   let mut rng : Rng := ⟨42⟩
   let mut agree := 0
   for _ in [0:300] do
     let (old, r1) := randomBuffer 9 4 rng
     let (new, r2) := randomBuffer 9 4 r1
     rng := r2
-    let shown := (Terminal.showing old |>.run (diff (some old) new)).screen
+    let shown := (Terminal.showing old |>.run (diff old new)).screen
     if shown == new then agree := agree + 1
     else check "diff reproduces the new buffer" false fun _ => s!"{old.lines} → {new.lines}, shown {shown.lines}"
   checkEq "random diffs reproduce the new buffer" 300 agree

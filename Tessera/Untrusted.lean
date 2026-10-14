@@ -144,9 +144,9 @@ namespace Tessera.Widget
 open Untrusted
 
 /-- Safe text, on one row. -/
-def safe (s : Safe) : Widget := str s.text
+def safe {cs : Charset} (s : Safe) : Widget cs := str s.text
 
 /-- Safe text, word-wrapped. -/
-def safeTxt (s : Safe) : Widget := txt s.text
+def safeTxt {cs : Charset} (s : Safe) : Widget cs := txt s.text
 
 end Tessera.Widget

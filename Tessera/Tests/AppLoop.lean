@@ -14,7 +14,7 @@ namespace Tessera.Tests.AppLoop
 open Tessera Widget
 
 /-- Counts `+` keys and its own events; quits on `q`. -/
-def counter : App Nat String where
+def counter : App CS Nat String where
   draw n := str s!"count {n}"
   update
     | .input (.key (.char '+') _), n => pure (n + 1, false)
@@ -27,7 +27,7 @@ structure Run where
   /-- Each write to the screen. -/
   writes : Array String
   /-- What the model terminal shows after all of them. -/
-  shown : Terminal
+  shown : List String
   /-- Messages left unread. -/
   left : List (Msg String)
 
@@ -40,7 +40,7 @@ def runWith (msgs : List (Msg String)) (w h : Nat) : IO Run := do
   let ws ← writes.get
   -- A resize changes the size the model terminal draws into.
   let size := msgs.foldl (fun s m => match m with | .input (.resize w h) => (w, h) | _ => s) (w, h)
-  let shown := ws.foldl (fun t s => t.run s) (Terminal.new size.1 size.2)
+  let shown := (ws.foldl (fun t s => t.run s) (Terminal.new size.1 size.2)).screen.lines
   return { final, writes := ws, shown, left := ← queue.get }
 
 def plus : Msg String := .input (.key (.char '+'))
@@ -49,13 +49,13 @@ def tests : TestM Unit := do
   let r ← runWith [plus, plus, .tick, .custom "net", plus] 10 1
   checkEq "state" 13 r.final
   checkEq "first frame and one per message" 6 r.writes.size
-  checkEq "the screen shows the last state" ["count 13  "] r.shown.screen.lines
+  checkEq "the screen shows the last state" ["count 13  "] r.shown
   checkEq "a tick that changes nothing writes nothing" "" r.writes[3]!
   let q ← runWith [plus, .input (.key (.char 'q')), plus] 10 1
   checkEq "quit stops" 1 q.final
   checkEq "messages after quit are not read" 1 q.left.length
   let z ← runWith [plus, .input (.resize 12 2), plus] 10 1
   check "resize redraws" (z.writes[2]!.startsWith (Ansi.resetStyle ++ Ansi.clearScreen))
-  checkEq "drawn at the new size" ["count 2     ", "            "] z.shown.screen.lines
+  checkEq "drawn at the new size" ["count 2     ", "            "] z.shown
 
 end Tessera.Tests.AppLoop

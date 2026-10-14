@@ -119,19 +119,27 @@ inductive Cell (cs : Charset)
   | wideRight (style : Style)
   | blank (style : Style)
 
+structure Row (cs : Charset) (w : Nat) where
+  cells : List (Cell cs)
+  length_eq : cells.length = w
+  wf : Cell.wellFormed cells = true
+
 structure Buffer (cs : Charset) (w h : Nat) where
-  cells : Vector (Cell cs) (w * h)
-  wellFormed : WellFormed w cells
+  rows : Vector (Row cs w) h
 ```
 
-A cell holds a glyph, the right half of a two-cell glyph, or nothing.
+A cell holds a glyph, the right half of a two-cell glyph, or nothing. A space is always a blank, so that two buffers that look the same are equal.
 
-The buffer's size is part of its type, so a position in it is a `Fin w` and a `Fin h`, and no access can fall outside it. `WellFormed` says that a two-cell glyph at column `x` is followed by `wideRight` at `x + 1` on the same row, and that `wideRight` appears nowhere else.
+The buffer's size is part of its type, so every frame of one size has one type. Each row carries two proofs:
+- it has exactly `w` cells;
+- it is well formed: every two-cell glyph is followed by its right half, and a right half follows nothing else.
 
-The writing functions preserve `WellFormed`:
-- `set` overwrites a cell, and blanks the other half of any two-cell glyph it cuts.
-- `putString` writes a `Text` from a column, clipped at the right edge, and returns the column after it as a number no greater than `w`.
-- `blit` copies one buffer onto another, clipped at the edges.
+Every write goes through `Row.splice`, which writes a well-formed run of cells from a column, clipped at the right edge. It keeps the cells before the run with `Cell.cut`, and the cells after it with `Cell.skip`. Each of these turns a two-cell glyph it splits in half into a blank. `wellFormed_cut`, `wellFormed_skip` and `wellFormed_append` show that the result is well formed again, and the lengths add up to `w`.
+
+The writing functions are built on `splice`:
+- `putString` writes glyphs from a column and returns the column after them, a number no greater than `w`.
+- `blit` copies each row of one buffer onto another, clipped at the edges.
+- `crop` takes part of a buffer with `Row.slice`, blanking a two-cell glyph cut by either edge.
 
 ## Widgets and layout
 
@@ -220,7 +228,7 @@ Everything Tessera writes to the terminal is an `Op`, and `Op.encode` gives its 
 - The only operations that place text inside an escape sequence are `setTitle` and `copy`, and both take text the program wrote.
 - No operation asks the terminal a question, so none can make the terminal type a reply into the program.
 
-`diff old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. When the screen changes size, `redraw new` clears it and draws the whole frame.
+`diff old new` returns the operations that turn a terminal showing `old` into one showing `new`. Both frames are buffers of the same type, so they have the same size. A two-cell glyph is written again when either of its halves changed. It writes only the cells that changed, moves the cursor once per run of them, and sets the style only when it differs from the last cell written. When the screen changes size, `redraw new` clears it and draws the whole frame.
 
 ### The VT model
 
