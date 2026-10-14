@@ -46,12 +46,26 @@ def mono {a b a' b' : Nat} (i : Image cs a b) (ha : a ≤ a') (hb : b ≤ b') : 
 
 end Image
 
-structure Widget (cs : Charset) where
+/-- A widget whose text is of origin `o`. Its constructor is private: a widget of origin `.app`
+is built only from text the program wrote, by the functions here, and one of a program's own
+making (`Widget.custom`) is of origin `.remote`, so a remote text cannot pass for the program's
+by being drawn in a widget of its own. -/
+structure Widget (cs : Charset) (o : Origin) where
+  private mk ::
   hPolicy : Policy := .fixed
   vPolicy : Policy := .fixed
   render : (ctx : Context) → Image cs ctx.width ctx.height
 
-instance : Inhabited (Widget cs) := ⟨{ render := fun _ => .empty }⟩
+variable {o : Origin}
+
+/-- Text of origin `t` may be shown in a widget of origin `w`: the program's text in any widget,
+text from elsewhere only in a widget of origin `.remote`. -/
+class Shows (t w : Origin) : Prop
+
+instance {w : Origin} : Shows .app w := ⟨⟩
+instance : Shows .remote .remote := ⟨⟩
+
+instance : Inhabited (Widget cs o) := ⟨{ render := fun _ => .empty }⟩
 
 /-- The longest prefix of `s` that fits in `width` cells. -/
 def truncate (cs : Charset) (width : Nat) (s : String) : String :=
@@ -87,29 +101,39 @@ private def linesImage (ctx : Context) (lines : List String) (width : Nat) (hw :
 
 namespace Widget
 
-def empty : Widget cs := default
+def empty : Widget cs o := default
 
-variable {o : Origin}
+/-- A widget of the program's own making. Its text may be from anywhere, so it is of origin
+`.remote`. -/
+def custom (render : (ctx : Context) → Image cs ctx.width ctx.height)
+    (hPolicy vPolicy : Policy := .fixed) : Widget cs .remote :=
+  { hPolicy, vPolicy, render }
+
+/-- A widget of the program's text, used where text from elsewhere may be. -/
+def lift (w : Widget cs .app) : Widget cs .remote :=
+  { hPolicy := w.hPolicy, vPolicy := w.vPolicy, render := w.render }
+
+instance : Coe (Widget cs .app) (Widget cs .remote) := ⟨lift⟩
 
 /-- Lines of text, one per row, clipped to the space given. -/
-def strs (ts : List (Text cs o)) : Widget cs where
+def strs {t : Origin} [Shows t o] (ts : List (Text cs t)) : Widget cs o where
   render ctx :=
     let lines := (ts.map (·.text)).take ctx.height
     linesImage ctx lines (min ctx.width (lines.foldl (fun n l => max n (cs.textWidth l)) 0))
       (Nat.min_le_left _ _) (by simp [lines]; omega)
 
 /-- One line of text, clipped to the space given. -/
-def str (t : Text cs o) : Widget cs := strs [t]
+def str {t : Origin} [Shows t o] (s : Text cs t) : Widget cs o := strs [s]
 
 /-- Text wrapped to the width given. -/
-def txt (t : Text cs o) : Widget cs where
+def txt {t : Origin} [Shows t o] (s : Text cs t) : Widget cs o where
   hPolicy := .greedy
   render ctx :=
-    let lines := (wrap cs ctx.width t.text).take ctx.height
+    let lines := (wrap cs ctx.width s.text).take ctx.height
     linesImage ctx lines ctx.width (Nat.le_refl _) (by simp [lines]; omega)
 
 /-- All the space given, filled with `c`, or blank if `cs` does not allow it. -/
-def fill (c : Char := ' ') : Widget cs where
+def fill (c : Char := ' ') : Widget cs o where
   hPolicy := .greedy
   vPolicy := .greedy
   render ctx :=
@@ -120,10 +144,10 @@ def fill (c : Char := ' ') : Widget cs where
         (b.putString 0 y gs ctx.style).1⟩
 
 /-- Draw `w` and everything in it in style `s`, over the inherited style. -/
-def withStyle (s : Style) (w : Widget cs) : Widget cs :=
+def withStyle (s : Style) (w : Widget cs o) : Widget cs o :=
   { w with render := fun ctx => w.render { ctx with style := s.over ctx.style } }
 
-def pad (left top right bottom : Nat) (w : Widget cs) : Widget cs :=
+def pad (left top right bottom : Nat) (w : Widget cs o) : Widget cs o :=
   { w with
     render := fun ctx =>
       let inner := w.render { ctx with width := ctx.width - left - right,
@@ -133,17 +157,17 @@ def pad (left top right bottom : Nat) (w : Widget cs) : Widget cs :=
       ⟨iw, ih, Nat.min_le_left _ _, Nat.min_le_left _ _,
         (Buffer.blank iw ih ctx.style).blit left top inner.buf⟩ }
 
-def padAll (n : Nat) (w : Widget cs) : Widget cs := pad n n n n w
+def padAll (n : Nat) (w : Widget cs o) : Widget cs o := pad n n n n w
 
 /-- At most `n` cells wide. -/
-def hLimit (n : Nat) (w : Widget cs) : Widget cs :=
+def hLimit (n : Nat) (w : Widget cs o) : Widget cs o :=
   { w with
     hPolicy := .fixed
     render := fun ctx =>
       (w.render { ctx with width := min n ctx.width }).mono (Nat.min_le_right _ _) (Nat.le_refl _) }
 
 /-- At most `n` cells high. -/
-def vLimit (n : Nat) (w : Widget cs) : Widget cs :=
+def vLimit (n : Nat) (w : Widget cs o) : Widget cs o :=
   { w with
     vPolicy := .fixed
     render := fun ctx =>
@@ -166,11 +190,11 @@ private def Piece.along {hz : Bool} {a : Nat} (p : Piece cs hz a) : Nat := if hz
 
 private def Piece.thickness {hz : Bool} {a : Nat} (p : Piece cs hz a) : Nat := if hz then p.h else p.w
 
-private abbrev Render (cs : Charset) (hz : Bool) (a : Nat) :=
-  Widget cs → (n : Nat) → {p : Piece cs hz a // p.along ≤ n}
+private abbrev Render (cs : Charset) (o : Origin) (hz : Bool) (a : Nat) :=
+  Widget cs o → (n : Nat) → {p : Piece cs hz a // p.along ≤ n}
 
 /-- Draw a child within `n` along the axis. -/
-private def renderIn (ctx : Context) : (hz : Bool) → Render cs hz (if hz then ctx.height else ctx.width)
+private def renderIn (ctx : Context) : (hz : Bool) → Render cs o hz (if hz then ctx.height else ctx.width)
   | true, c, n =>
     let i := c.render { ctx with width := n }
     ⟨⟨i.w, i.h, i.buf, by simpa using i.h_le⟩, by simpa [Piece.along] using i.w_le⟩
@@ -178,22 +202,22 @@ private def renderIn (ctx : Context) : (hz : Bool) → Render cs hz (if hz then 
     let i := c.render { ctx with height := n }
     ⟨⟨i.w, i.h, i.buf, by simpa using i.w_le⟩, by simpa [Piece.along] using i.h_le⟩
 
-private def policy (hz : Bool) (w : Widget cs) : Policy := if hz then w.hPolicy else w.vPolicy
+private def policy (hz : Bool) (w : Widget cs o) : Policy := if hz then w.hPolicy else w.vPolicy
 
-private def sumAlong {hz : Bool} {a : Nat} : List (Piece cs hz a ⊕ Widget cs) → Nat
+private def sumAlong {hz : Bool} {a : Nat} : List (Piece cs hz a ⊕ Widget cs o) → Nat
   | [] => 0
   | .inl p :: r => p.along + sumAlong r
   | .inr _ :: r => sumAlong r
 
-private def greedyCount {hz : Bool} {a : Nat} : List (Piece cs hz a ⊕ Widget cs) → Nat
+private def greedyCount {hz : Bool} {a : Nat} : List (Piece cs hz a ⊕ Widget cs o) → Nat
   | [] => 0
   | .inl _ :: r => greedyCount r
   | .inr _ :: r => greedyCount r + 1
 
 /-- Draw the fixed children, in order, each within what is left; the greedy ones wait. -/
-private def fixedPass {hz : Bool} {a : Nat} (r : Render cs hz a) :
-    (ws : List (Widget cs)) → (left : Nat) →
-      {out : List (Piece cs hz a ⊕ Widget cs) × Nat // sumAlong out.1 + out.2 ≤ left}
+private def fixedPass {hz : Bool} {a : Nat} (r : Render cs o hz a) :
+    (ws : List (Widget cs o)) → (left : Nat) →
+      {out : List (Piece cs hz a ⊕ Widget cs o) × Nat // sumAlong out.1 + out.2 ≤ left}
   | [], left => ⟨([], left), by simp [sumAlong]⟩
   | c :: ws, left =>
     if policy hz c == .fixed then
@@ -206,8 +230,8 @@ private def fixedPass {hz : Bool} {a : Nat} (r : Render cs hz a) :
 
 /-- Draw the greedy children, sharing `pool` among them, the first ones taking a cell more when
 it does not divide evenly. -/
-private def greedyPass {hz : Bool} {a : Nat} (r : Render cs hz a) :
-    (xs : List (Piece cs hz a ⊕ Widget cs)) → (pool : Nat) →
+private def greedyPass {hz : Bool} {a : Nat} (r : Render cs o hz a) :
+    (xs : List (Piece cs hz a ⊕ Widget cs o)) → (pool : Nat) →
       {ps : List (Piece cs hz a) // (ps.map (·.along)).sum ≤ sumAlong xs + pool}
   | [], _ => ⟨[], by simp⟩
   | .inl p :: xs, pool =>
@@ -234,7 +258,7 @@ private theorem maxThickness_le {hz : Bool} {a : Nat} :
     omega
 
 /-- Children side by side (`hz`) or one above the other. -/
-private def box (hz : Bool) (ws : List (Widget cs)) : Widget cs where
+private def box (hz : Bool) (ws : List (Widget cs o)) : Widget cs o where
   hPolicy := if ws.any (·.hPolicy == .greedy) then .greedy else .fixed
   vPolicy := if ws.any (·.vPolicy == .greedy) then .greedy else .fixed
   render ctx :=
@@ -255,13 +279,13 @@ private def box (hz : Bool) (ws : List (Widget cs)) : Widget cs where
     ⟨bw, bh, hbw, hbh, b⟩
 
 /-- Children side by side. -/
-def hBox (ws : List (Widget cs)) : Widget cs := box true ws
+def hBox (ws : List (Widget cs o)) : Widget cs o := box true ws
 
 /-- Children one above the other. -/
-def vBox (ws : List (Widget cs)) : Widget cs := box false ws
+def vBox (ws : List (Widget cs o)) : Widget cs o := box false ws
 
 /-- A line around `w`, with `label` in its top edge. -/
-def borderWithLabel (label : Text cs o) (w : Widget cs) : Widget cs :=
+def borderWithLabel {t : Origin} [Shows t o] (label : Text cs t) (w : Widget cs o) : Widget cs o :=
   { w with
     render := fun ctx =>
       if hs : ctx.width < 2 ∨ ctx.height < 2 then
@@ -285,10 +309,10 @@ def borderWithLabel (label : Text cs o) (w : Widget cs) : Widget cs :=
         let b := put b 1 0 (truncate cs inner.w label.text)
         ⟨bw, bh, by omega, by omega, b.blit 1 1 inner.buf⟩ }
 
-def border (w : Widget cs) : Widget cs := borderWithLabel (o := .app) .empty w
+def border (w : Widget cs o) : Widget cs o := borderWithLabel (t := .app) .empty w
 
 /-- `w` in the middle of all the space given. -/
-def center (w : Widget cs) : Widget cs where
+def center (w : Widget cs o) : Widget cs o where
   hPolicy := .greedy
   vPolicy := .greedy
   render ctx :=
@@ -298,7 +322,7 @@ def center (w : Widget cs) : Widget cs where
         ((ctx.width - img.w) / 2) ((ctx.height - img.h) / 2) img.buf⟩
 
 /-- The rows of `w` from `offset` on, in all the space given. -/
-def viewport (offset : Nat) (w : Widget cs) : Widget cs where
+def viewport (offset : Nat) (w : Widget cs o) : Widget cs o where
   hPolicy := .greedy
   vPolicy := .greedy
   render ctx :=
@@ -307,8 +331,21 @@ def viewport (offset : Nat) (w : Widget cs) : Widget cs where
       (Buffer.blank ctx.width ctx.height ctx.style).blit 0 0
         (img.buf.crop 0 offset img.w (min ctx.height (img.h - offset)))⟩
 
+/-- Draw `w` in a style its sender chose, over the inherited style. Whatever the sender chose, the
+result is a reserved style only where the inherited one was (`RemoteStyle.reserved_over`). -/
+def withSenderStyle (r : RemoteStyle) (w : Widget cs o) : Widget cs o := withStyle r.toStyle w
+
+/-- Text from elsewhere in a place the program keeps for its own, such as a room's topic in its
+header: cut to `budget` cells and drawn between the program's delimiters. It is the one way text
+from elsewhere reaches a widget of origin `.app`, and it is never wider than the delimiters and
+`budget`. -/
+def delimited (openD closeD : Text cs .app) (budget : Nat) (t : Text cs .remote) : Widget cs .app :=
+  let inner : Widget cs .remote :=
+    hLimit (openD.width + budget + closeD.width) (str (openD.lift ++ t.truncate budget ++ closeD.lift))
+  { hPolicy := inner.hPolicy, vPolicy := inner.vPolicy, render := inner.render }
+
 /-- The whole frame: `w` drawn into a `width` by `height` screen. -/
-def draw (w : Widget cs) (width height : Nat) : Buffer cs width height :=
+def draw (w : Widget cs o) (width height : Nat) : Buffer cs width height :=
   (Buffer.blank width height).blit 0 0 (w.render { width, height }).buf
 
 end Widget

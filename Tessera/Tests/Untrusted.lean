@@ -75,7 +75,7 @@ def corpus : List (String × String) := [
 
 /-- `text` between two bordered panes, as an application might draw a message. -/
 def framed (text : List (Text CS .remote)) : Buffer CS 40 6 :=
-  (hBox [hLimit 6 (border (str t!"left")), border (vBox (text.map str ++ [fill])),
+  (hBox (o := .remote) [hLimit 6 (border (str t!"left")), border (vBox (text.map str ++ [fill])),
     hLimit 7 (border (str t!"right"))]).draw 40 6
 
 /-- The borders between the panes, on every row inside them. -/
@@ -143,6 +143,6 @@ def tests : TestM Unit := do
   check "mixed scripts" (mixedScript (name "pаypal") && !mixedScript (name "paypal"))
   checkEq "a name cannot wear a badge" "alice ␦" (name "alice 🔒").text.text
   checkEq "numbers as text" "1234" (Text.ofNat (cs := CS) 1234).text
-  checkEq "app text is drawn as written" ["┌ok┐"] ((str (cs := CS) t!"┌ok┐").draw 4 1).lines
+  checkEq "app text is drawn as written" ["┌ok┐"] ((str (cs := CS) (o := .app) t!"┌ok┐").draw 4 1).lines
 
 end Tessera.Tests.Untrusted

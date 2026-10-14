@@ -25,7 +25,7 @@ in the application
   Widget.str s
 -/
 #guard_msgs in
-example (s : String) : Widget Charset.standard := Widget.str (o := .remote) s
+example (s : String) : Widget Charset.standard .remote := Widget.str (t := .remote) s
 
 /--
 error: Tactic `decide` proved that the proposition
@@ -58,5 +58,47 @@ is false
 -/
 #guard_msgs in
 example : Glyph Charset.standard := ⟨'\x1b', by decide⟩
+
+/--
+error: failed to synthesize instance of type class
+  Shows Origin.remote Origin.app
+
+Hint: Type class instance resolution failures can be inspected with the `set_option trace.Meta.synthInstance true` command.
+-/
+#guard_msgs in
+example (t : Text Charset.standard .remote) : Widget Charset.standard .app := Widget.str t
+
+/--
+error: Type mismatch
+  Widget.custom r
+has type
+  Widget Charset.standard Origin.remote
+but is expected to have type
+  Widget Charset.standard Origin.app
+-/
+#guard_msgs in
+example (r : (ctx : Context) → Image Charset.standard ctx.width ctx.height) :
+    Widget Charset.standard .app := Widget.custom r
+
+/-- error: Invalid `⟨...⟩` notation: Constructor for `Tessera.Widget` is marked as private -/
+#guard_msgs in
+example : Widget Charset.standard .app := ⟨.fixed, .fixed, fun _ => .empty⟩
+
+/--
+error: Type mismatch
+  b
+has type
+  Widget Charset.standard Origin.remote
+but is expected to have type
+  Widget Charset.standard Origin.app
+-/
+#guard_msgs in
+example (b : Widget Charset.standard .remote) (a : Widget Charset.standard .app) :
+    Frame Charset.standard :=
+  { header := b, body := b, statusBar := a, prompt := a }
+
+/-- error: `reverse` is not a field of structure `RemoteStyle` -/
+#guard_msgs in
+example : RemoteStyle := { reverse := true }
 
 end Tessera.Tests.Rejects

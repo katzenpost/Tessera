@@ -6,6 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 import Tessera.Widget
 import Tessera.Untrusted
 import Tessera.Terminal
+import Tessera.TrustedPath
 
 /-! # Axioms
 
@@ -66,5 +67,14 @@ open Tessera Untrusted
 
 /-- info: 'Tessera.redraw_correct' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms redraw_correct
+
+/-- info: 'Tessera.RemoteStyle.not_reserved' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms RemoteStyle.not_reserved
+
+/-- info: 'Tessera.RemoteStyle.reserved_over' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms RemoteStyle.reserved_over
+
+/-- info: 'Tessera.Roster.build' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms Roster.build
 
 end Tessera.Tests.Axioms

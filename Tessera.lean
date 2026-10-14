@@ -14,3 +14,4 @@ import Tessera.Widget
 import Tessera.App
 import Tessera.Text
 import Tessera.Untrusted
+import Tessera.TrustedPath

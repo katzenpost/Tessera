@@ -9,7 +9,7 @@ control come from [crossterm-lean-ffi](https://github.com/katzenpost/crossterm-l
 import Tessera
 open Tessera Widget
 
-def draw (n : Nat) : Widget .standard :=
+def draw (n : Nat) : Widget .standard .remote :=
   center (borderWithLabel t!" Counter " (padAll 1 (str (.ofNat n ++ t!"   + adds one, Esc quits"))))
 
 def update : Msg Unit → Nat → IO (Nat × Bool)

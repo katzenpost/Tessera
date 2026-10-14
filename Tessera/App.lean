@@ -27,7 +27,7 @@ inductive Msg (ε : Type) where
 /-- An application with state `σ` and events of its own of type `ε`, drawn with the characters
 `cs` allows. -/
 structure App (cs : Charset) (σ ε : Type) where
-  draw : σ → Widget cs
+  draw : σ → Widget cs .remote
   /-- The new state, and whether to quit. -/
   update : Msg ε → σ → IO (σ × Bool)
   /-- How often to send `Msg.tick`, if at all. -/

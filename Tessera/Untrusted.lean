@@ -74,10 +74,12 @@ def confusables : List (Char × Char) :=
 
 /-- What a name looks like, ignoring case, look-alike letters, accents and separators: two names
 with one skeleton are easily taken for each other. -/
-def skeleton (i : Ident cs) : String :=
-  String.ofList <| i.text.text.toList.filterMap fun c =>
+def skeletonOf (s : String) : String :=
+  String.ofList <| s.toList.filterMap fun c =>
     if isCombining c || c == ' ' || c == '_' || c == '-' || c == '.' then none
     else some ((confusables.lookup c).getD c.toLower)
+
+def skeleton (i : Ident cs) : String := skeletonOf i.text.text
 
 /-- Whether a name mixes Latin letters with Greek or Cyrillic ones, as a forged name might. -/
 def mixedScript (i : Ident cs) : Bool :=

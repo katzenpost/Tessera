@@ -13,7 +13,7 @@ list; Esc or Ctrl+C quits. -/
 
 open Tessera Widget Untrusted
 
-abbrev W := Widget Charset.standard
+abbrev W := Widget Charset.standard .remote
 
 structure State where
   items : Array String
@@ -22,10 +22,8 @@ structure State where
   beats : Nat := 0
 
 /-- The items, the selected one highlighted, scrolled to keep it in view. -/
-def list (items : Array String) (selected : Nat) : W where
-  hPolicy := .greedy
-  vPolicy := .greedy
-  render ctx :=
+def list (items : Array String) (selected : Nat) : W :=
+  Widget.custom (hPolicy := .greedy) (vPolicy := .greedy) fun ctx =>
     let offset := selected + 1 - min (selected + 1) ctx.height
     let row (i : Nat) (s : String) : W :=
       if i == selected then withStyle { reverse := true } (hBox [str (line s), fill]) else str (line s)

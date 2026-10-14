@@ -75,6 +75,26 @@ theorem marksOk_of_noMarks {r : Option Nat} {l : List Char} (h : ∀ c ∈ l, is
     have ht := ih (r := some 0) fun x hx => h x (List.mem_cons_of_mem _ hx)
     cases r <;> simp [marksOk, hc, ht]
 
+theorem marksOk_take {r : Option Nat} {l : List Char} (h : marksOk r l) (n : Nat) :
+    marksOk r (l.take n) := by
+  induction l generalizing r n with
+  | nil => simpa using h
+  | cons c t ih =>
+    cases n with
+    | zero => cases r <;> rfl
+    | succ n =>
+      simp only [List.take_succ_cons]
+      cases r with
+      | none =>
+        simp only [marksOk, Bool.and_eq_true] at h ⊢
+        exact ⟨h.1, ih h.2 n⟩
+      | some k =>
+        simp only [marksOk] at h ⊢
+        split at h
+        · simp only [Bool.and_eq_true, *, ↓reduceIte] at h ⊢
+          exact ⟨h.1, ih h.2 n⟩
+        · simp only [*, Bool.false_eq_true, ↓reduceIte]
+
 structure Text (cs : Charset) (o : Origin) where
   private mk ::
   text : String
@@ -136,6 +156,19 @@ def ofAscii? (s : String) : Option (Text cs .app) :=
 
 /-- The decimal digits of `n`. -/
 def ofNat (n : Nat) : Text cs .app := (ofAscii? (toString n)).getD empty
+
+/-- The first `n` characters. -/
+def take (t : Text cs o) (n : Nat) : Text cs o :=
+  ⟨String.ofList (t.text.toList.take n),
+    fun c hc => t.charsOk c (List.mem_of_mem_take (by simpa using hc)),
+    by simpa using marksOk_take t.seqOk n⟩
+
+/-- The longest beginning of `t` that fits in `width` cells. -/
+def truncate (t : Text cs o) (width : Nat) : Text cs o :=
+  let n := (t.text.toList.foldl (init := (0, 0, true)) fun (n, used, fits) c =>
+    let cw := cs.textWidth (String.singleton c)
+    if fits && used + cw ≤ width then (n + 1, used + cw, true) else (n, used, false)).1
+  t.take n
 
 /-- The glyphs drawn: the characters, without the combining accents, which take no cell. -/
 def glyphs (t : Text cs o) : List (Glyph cs) := cs.glyphs t.text

@@ -9,6 +9,7 @@ import Tessera.Tests.AppLoop
 import Tessera.Tests.Untrusted
 import Tessera.Tests.Axioms
 import Tessera.Tests.Rejects
+import Tessera.Tests.TrustedPath
 
 open Tessera.Tests
 
@@ -19,5 +20,6 @@ def main : IO UInt32 := do
     ("diff", Draw.diffTests),
     ("widgets", Widgets.tests),
     ("app", AppLoop.tests),
-    ("untrusted", Untrusted.tests)].mapM fun (n, t) => runSuite n t
+    ("untrusted", Untrusted.tests),
+    ("trusted path", TrustedPath.tests)].mapM fun (n, t) => runSuite n t
   return if results.all id then 0 else 1

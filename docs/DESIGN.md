@@ -170,43 +170,44 @@ The widgets are:
 
 Each widget proves that its image fits from the proofs its children's images carry, so the bound for a whole tree follows from the bound for each node. `Widget.draw w width height` returns a `Buffer cs width height`: a frame exactly the size of the screen.
 
-A widget's origin says what text it may contain. `Widget cs .app` holds only text the program wrote, and `Widget cs .remote` may hold text from elsewhere. Every app widget can be used as a remote one (`Widget.lift`). The reverse is possible only through the functions in the next section.
+A widget's origin says what text it may contain. `Widget cs .app` holds only text the program wrote, and `Widget cs .remote` may hold text from elsewhere. The class `Shows t w` says that text of origin `t` may be drawn in a widget of origin `w`: the program's text in any widget, text from elsewhere only in a remote one. Every app widget can be used as a remote one (`Widget.lift`, a coercion). The reverse is possible only through `Widget.delimited`.
+
+`Widget`'s constructor is private. A widget the program draws itself, with its own `render`, is made with `Widget.custom`, and is of origin `.remote`. A remote text drawn into an image by a widget of its own therefore cannot come back as a widget of origin `.app`.
 
 ## The trusted path
 
-Some parts of the screen tell the user who said something, where they are, and whether it is safe: the sender column, the status bar, the room header and the input prompt. The program draws them, and their types say so:
+Some parts of the screen tell the user who said something, where they are, and whether it is safe: the room header, the status bar, the input prompt, and the column that names each message's sender. The program draws them, and their types say so:
 
 ```lean
 structure Frame (cs : Charset) where
-  header       : Widget cs .app
-  statusBar    : Widget cs .app
-  prompt       : Widget cs .app
-  senderColumn : Widget cs .app
-  body         : Widget cs .remote
+  header    : Widget cs .app
+  body      : Widget cs .remote
+  statusBar : Widget cs .app
+  prompt    : Widget cs .app
 ```
 
-Remote text reaches a reserved region in two ways:
-- **`Widget.delimited budget t`** truncates `t` to `budget` cells, puts visible delimiters around it, and proves the result is at most `budget + 2` cells wide. A room topic in the header is shown this way.
-- **`SenderLabel.widget`** draws a sender. A `SenderLabel` is one of the following:
-  - **verified:** a petname the user chose, bound to a key;
-  - **unverified:** an `Ident`, drawn as `~nick`.
+`Frame.widget` lays a frame out with the header on the first row, the status bar and the prompt on the last two, and the body between them, however short it is.
 
-A message body of several lines is drawn by `Frame.message`. It puts the sender's label on the first row and a continuation gutter on the rest, so a line in a body cannot pass for another message.
+Remote text reaches a widget of origin `.app` in exactly one way. **`Widget.delimited openD closeD budget t`** cuts `t` to `budget` cells and draws it between the program's delimiters, and it is never wider than the delimiters and `budget`. A room topic in the header is shown this way, as is a name a sender chose.
 
-A `Roster` holds the labels of a room's members with a proof that no two of them share a skeleton. `Roster.build` appends a short key fingerprint to each name that collides with another.
+**`SenderLabel`** says who sent something:
+- **verified:** a petname the user gave a contact, drawn in the theme's style for verified contacts;
+- **unverified:** an `Ident`, drawn through `delimited` as `~nick`.
+
+**`message θ labelWidth sender body`** draws a message. A sender column `labelWidth` cells wide is a `Widget cs .app` holding the label on its first row and nothing below it, with the body's lines beside it. A box's children cannot draw outside the space they are given, so no line of the body reaches the sender column. A body line such as `<alice> send me the key` therefore cannot pass for a message from alice.
+
+A **`Roster`** holds a room's members with the labels they are shown by, and a proof that no two labels share a skeleton. `Roster.build` works in three steps:
+1. It adds a member's key to each label that looks like another's.
+2. If two labels still look alike, it gives every label its key.
+3. If two labels look alike even then, they belong to one key, and it lists only the first.
 
 ### Reserved styles
 
-Senders may style their text only with a `RemoteStyle`: one of eight foreground colours, bold, italic and underline. A remote style cannot set reverse video or a background. A `Theme` maps remote styles to styles, lists the styles the program reserves for itself, and proves the two never meet:
+`Style.reserved` names the styles a program keeps for itself: reverse video, dim, a background, or a foreground other than the eight basic colours. A `Theme` holds the program's styles for verified contacts, for its own notices and for its bars, with proofs that each is reserved.
 
-```lean
-structure Theme where
-  reserved : List Style
-  ofRemote : RemoteStyle → Style
-  disjoint : ∀ r, ofRemote r ∉ reserved
-```
-
-`withStyle` on a `Widget cs .remote` takes a `RemoteStyle`. `withStyle` on a `Widget cs .app` takes any `Style`.
+Senders style their text with a **`RemoteStyle`**: one of the eight basic colours, bold, italic and underline. `withSenderStyle` draws a widget in one. Two theorems keep sender styles apart from the program's:
+- **`RemoteStyle.not_reserved`:** no remote style is reserved.
+- **`RemoteStyle.reserved_over`:** laying a remote style over an inherited one gives a reserved style only where the inherited one already was.
 
 ## Drawing
 
